@@ -29,6 +29,14 @@ router.get('/backends', (req, res) => {
   res.json(backends);
 });
 
+router.get('/backends/:id', (req, res) => {
+  const db = getDb();
+  const backend = db.prepare('SELECT id, name, type, config, enabled, created_at FROM backends WHERE id = ?').get(req.params.id);
+  if (!backend) return res.status(404).json({ error: 'Backend not found' });
+  backend.config = JSON.parse(backend.config);
+  res.json(backend);
+});
+
 router.post('/backends', (req, res) => {
   const { name, type, config } = req.body;
   if (!name || !type || !config) return res.status(400).json({ error: 'name, type, config required' });

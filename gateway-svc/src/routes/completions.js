@@ -9,11 +9,22 @@ router.post('/chat/completions', authMiddleware, async (req, res) => {
   const { subscription, backend } = req;
   const db = getDb();
 
+  // Validate request body
+  const body = req.body;
+  if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+    return res.status(400).json({
+      error: {
+        message: 'Request body must include a non-empty "messages" array.',
+        type: 'invalid_request_error'
+      }
+    });
+  }
+
   const logEntry = {
     subscription_id: subscription.id,
     product_id: subscription.product_id,
     backend_id: backend.id,
-    model: req.body.model || backend.config.model || 'unknown',
+    model: body.model || backend.config.model || 'unknown',
     status: 'error',
     error_msg: null,
     prompt_tokens: 0,
@@ -24,7 +35,7 @@ router.post('/chat/completions', authMiddleware, async (req, res) => {
 
   try {
     const adapter = getAdapter(backend.type);
-    const result = await adapter.complete(backend.config, req.body);
+    const result = await adapter.complete(backend.config, body);
 
     const usage = result.normalized.usage || {};
     logEntry.status = 'success';

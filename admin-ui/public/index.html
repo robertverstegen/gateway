@@ -300,6 +300,21 @@
   </div>
 </div>
 
+<div id="modal-edit-backend" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-edit-backend')">×</button>
+    <h3>Edit Backend</h3>
+    <input type="hidden" id="eb-id">
+    <div class="form-group"><label>Name</label><input id="eb-name" placeholder="e.g. claude-prod"></div>
+    <div class="form-group"><label>Type</label><input id="eb-type" disabled style="opacity:0.5;cursor:not-allowed"></div>
+    <div class="form-group"><label>Configuration (JSON)</label><textarea id="eb-config" rows="7" style="font-family:var(--mono);font-size:12px;"></textarea></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modal-edit-backend')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditBackend()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-container" id="toasts"></div>
 
 <script>
@@ -423,7 +438,8 @@ async function loadBackends() {
           ${b.enabled
             ? `<button class="btn btn-sm btn-danger" onclick="killBackend('${b.id}','${b.name}')">Kill Switch</button>`
             : `<button class="btn btn-sm btn-success" onclick="enableBackend('${b.id}','${b.name}')">Re-enable</button>`}
-          <button class="btn btn-sm btn-ghost" onclick="deleteBackend('${b.id}','${b.name}')">Delete</button>
+          <button class="btn btn-sm btn-ghost" onclick="openEditBackend('${b.id}')">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteBackend('${b.id}','${b.name}')">Delete</button>
         </div></td>
       </tr>`).join('')
     }</tbody></table>`;
@@ -438,6 +454,30 @@ async function addBackend() {
     toast('Backend created');
     loadBackends();
   } catch (e) { toast('Error: ' + e.message, 'err'); }
+}
+
+async function openEditBackend(id) {
+  try {
+    const b = await api('GET', `/admin/backends/${id}`);
+    document.getElementById('eb-id').value = b.id;
+    document.getElementById('eb-name').value = b.name;
+    document.getElementById('eb-type').value = b.type;
+    document.getElementById('eb-config').value = JSON.stringify(b.config, null, 2);
+    openModal('modal-edit-backend');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function saveEditBackend() {
+  const id = document.getElementById('eb-id').value;
+  const name = document.getElementById('eb-name').value;
+  const configRaw = document.getElementById('eb-config').value;
+  try {
+    const config = JSON.parse(configRaw);
+    await api('PATCH', `/admin/backends/${id}`, { name, config });
+    closeModal('modal-edit-backend');
+    toast('Backend updated');
+    loadBackends();
+  } catch(e) { toast('Error: ' + e.message, 'err'); }
 }
 
 async function killBackend(id, name) {

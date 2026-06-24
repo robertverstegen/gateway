@@ -1,19 +1,13 @@
-version: '3.9'
-
 services:
 
   # ── Gateway ─────────────────────────────────────────────────────────────────
-  # Exposed to the internet: only port 3000 (completions API)
-  # Admin port 3001 is on the internal network only — never published
   gateway:
     build:
-      context: .
+      context: ./gateway-svc
       dockerfile: Dockerfile
     container_name: llm-gateway
     ports:
-      - "3000:3000"       # Public: completions API
-      # Port 3001 (admin API) is deliberately NOT published here.
-      # It is only reachable from other containers on the 'internal' network.
+      - "3000:3000"
     volumes:
       - gateway-data:/data
     networks:
@@ -22,7 +16,7 @@ services:
     environment:
       PORT: 3000
       ADMIN_PORT: 3001
-      ADMIN_BIND: "0.0.0.0"   # Bind on all interfaces so admin-ui can reach it internally
+      ADMIN_BIND: "0.0.0.0"
       DB_PATH: /data/gateway.db
       ADMIN_KEY: ${ADMIN_KEY:-changeme}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
@@ -34,24 +28,24 @@ services:
     restart: unless-stopped
 
   # ── Admin UI ─────────────────────────────────────────────────────────────────
-  # Internal only: no public network, no direct internet access.
-  # Only reachable on port 8080 from the host (or via a VPN / internal proxy).
+  # 'admin-facing' network handles host → container traffic (port 8086)
+  # 'internal' network handles container → gateway:3001 traffic (no internet)
   admin-ui:
     build:
       context: ./admin-ui
       dockerfile: Dockerfile
     container_name: llm-gateway-admin
     ports:
-      - "127.0.0.1:8080:8080"   # Bind to loopback only — not reachable from internet
+      - "8086:8086"
     networks:
-      - internal                  # Can reach gateway:3001, cannot reach internet
+      - admin-facing
+      - internal
     environment:
-      PORT: 8080
+      PORT: 8086
       GATEWAY_ADMIN_URL: http://gateway:3001
       ADMIN_KEY: ${ADMIN_KEY:-changeme}
-      # Optional: protect the UI itself with HTTP basic auth
-      UI_USERNAME: ${UI_USERNAME:-}
-      UI_PASSWORD: ${UI_PASSWORD:-}
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:-admin}
     depends_on:
       - gateway
     restart: unless-stopped
@@ -61,7 +55,9 @@ networks:
     driver: bridge
   internal:
     driver: bridge
-    internal: true    # Docker blocks all outbound internet traffic on this network
+    internal: true    # gateway ↔ admin-ui only, no internet
+  admin-facing:
+    driver: bridge    # admin-ui ↔ host/nginx, no internal: true
 
 volumes:
   gateway-data:

@@ -6,18 +6,17 @@ const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8086;
 
-// Gateway admin API base URL — reachable only on the internal Docker network
 const GATEWAY_ADMIN_URL = process.env.GATEWAY_ADMIN_URL || 'http://gateway:3001';
+const ADMIN_KEY = process.env.ADMIN_KEY;
 
-// Optional: protect the admin UI itself with basic auth
 const UI_USERNAME = process.env.UI_USERNAME;
 const UI_PASSWORD = process.env.UI_PASSWORD;
 
 app.use(morgan('dev'));
 
-// Simple HTTP basic auth guard (optional — set UI_USERNAME + UI_PASSWORD to enable)
+// Optional HTTP basic auth
 if (UI_USERNAME && UI_PASSWORD) {
   app.use((req, res, next) => {
     const auth = req.headers['authorization'];
@@ -34,30 +33,32 @@ if (UI_USERNAME && UI_PASSWORD) {
   });
 }
 
-// Proxy all /admin/* and /health calls through to the gateway's internal admin port
-app.use('/admin', createProxyMiddleware({
-  target: GATEWAY_ADMIN_URL,
-  changeOrigin: true,
-  on: {
-    error: (err, req, res) => {
-      console.error('Proxy error:', err.message);
-      res.status(502).json({ error: 'Cannot reach gateway admin API', detail: err.message });
-    }
-  }
-}));
-
-app.use('/gateway-health', createProxyMiddleware({
-  target: GATEWAY_ADMIN_URL,
-  changeOrigin: true,
-  pathRewrite: { '^/gateway-health': '/health' }
-}));
-
-// Health check for this container
+// Health check for this container (handled before proxy)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'admin-ui' });
 });
 
-// Serve the web UI
+// Proxy /admin/* to gateway, injecting the admin key header on every request
+const adminProxy = createProxyMiddleware({
+  target: GATEWAY_ADMIN_URL + '/admin',
+  changeOrigin: true,
+  pathRewrite: { '^/admin': '' },
+  on: {
+    proxyReq: (proxyReq) => {
+      if (ADMIN_KEY) {
+        proxyReq.setHeader('x-admin-key', ADMIN_KEY);
+      }
+    }
+  },
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err.message);
+    res.status(502).json({ error: 'Cannot reach gateway admin API', detail: err.message });
+  }
+});
+
+app.use('/admin', adminProxy);
+
+// Serve the web UI for everything else
 app.use('/', express.static(path.join(__dirname, '../public')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
@@ -65,6 +66,7 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🖥️  Admin UI running on http://0.0.0.0:${PORT}`);
-  console.log(`   Proxying admin API → ${GATEWAY_ADMIN_URL}\n`);
+  console.log(`   Proxying /admin/* → ${GATEWAY_ADMIN_URL}/admin/*`);
+  console.log(`   Admin key: ${ADMIN_KEY ? 'configured' : 'NOT SET - admin calls will fail'}\n`);
   if (UI_USERNAME) console.log('   Basic auth: enabled');
 });

@@ -77,7 +77,7 @@ function initSchema(db) {
 }
 
 function seedDefaults(db) {
-  const claudeExists = db.prepare("SELECT 1 FROM backends WHERE name = 'claude'").get();
+  const claudeExists = db.prepare("SELECT 1 FROM backends WHERE type = 'claude'").get();
   if (!claudeExists && process.env.CLAUDE_API_KEY) {
     db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'claude', 'claude', ?)`)
       .run(uuidv4(), JSON.stringify({
@@ -87,13 +87,13 @@ function seedDefaults(db) {
       }));
   }
 
-  const azureExists = db.prepare("SELECT 1 FROM backends WHERE name = 'azure_openai'").get();
+  const azureExists = db.prepare("SELECT 1 FROM backends WHERE type = 'azure_openai'").get();
   if (!azureExists && process.env.AZURE_OPENAI_ENDPOINT) {
-    db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'azure_openai', 'azure_openai', ?)`)
+    db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'Azure OpenAI', 'azure_openai', ?)`)
       .run(uuidv4(), JSON.stringify({
         endpoint: process.env.AZURE_OPENAI_ENDPOINT,
         api_key: process.env.AZURE_OPENAI_KEY,
-        deployment: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4',
+        deployment: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o',
         api_version: process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview'
       }));
   }

@@ -22,6 +22,7 @@ router.post('/chat/completions', authMiddleware, async (req, res) => {
 
   const logEntry = {
     subscription_id: subscription.id,
+    customer_ref: subscription.customer_ref || null,
     product_id: subscription.product_id,
     backend_id: backend.id,
     model: body.model || backend.config.model || 'unknown',
@@ -61,9 +62,9 @@ router.post('/chat/completions', authMiddleware, async (req, res) => {
     });
   } finally {
     db.prepare(`
-      INSERT INTO usage_log (subscription_id, product_id, backend_id, model, status, error_msg,
+      INSERT INTO usage_log (subscription_id, customer_ref, product_id, backend_id, model, status, error_msg,
         prompt_tokens, completion_tokens, total_tokens, latency_ms)
-      VALUES (@subscription_id, @product_id, @backend_id, @model, @status, @error_msg,
+      VALUES (@subscription_id, @customer_ref, @product_id, @backend_id, @model, @status, @error_msg,
         @prompt_tokens, @completion_tokens, @total_tokens, @latency_ms)
     `).run(logEntry);
   }

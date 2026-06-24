@@ -155,7 +155,7 @@ router.delete('/products/:id', (req, res) => {
 router.get('/subscriptions', (req, res) => {
   const db = getDb();
   const subs = db.prepare(`
-    SELECT s.id, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
+    SELECT s.id, s.customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
            p.name as product_name, b.name as backend_name
     FROM subscriptions s
     JOIN products p ON s.product_id = p.id
@@ -165,9 +165,23 @@ router.get('/subscriptions', (req, res) => {
   res.json(subs);
 });
 
+router.get('/subscriptions/:id', (req, res) => {
+  const db = getDb();
+  const sub = db.prepare(`
+    SELECT s.id, s.customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
+           p.name as product_name, b.name as backend_name
+    FROM subscriptions s
+    JOIN products p ON s.product_id = p.id
+    JOIN backends b ON p.backend_id = b.id
+    WHERE s.id = ?
+  `).get(req.params.id);
+  if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+  res.json(sub);
+});
+
 router.post('/subscriptions', (req, res) => {
-  const { name, product_id, rate_limit } = req.body;
-  if (!name || !product_id) return res.status(400).json({ error: 'name, product_id required' });
+  const { name, customer_ref, product_id, rate_limit } = req.body;
+  if (!name || !customer_ref || !product_id) return res.status(400).json({ error: 'name, customer_ref, product_id required' });
 
   const db = getDb();
   const product = db.prepare('SELECT id FROM products WHERE id = ?').get(product_id);
@@ -179,24 +193,31 @@ router.post('/subscriptions', (req, res) => {
   const keyPrefix = rawKey.substring(0, 10);
   const id = uuidv4();
 
-  db.prepare(`
-    INSERT INTO subscriptions (id, name, key_hash, key_prefix, product_id, rate_limit)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, name, keyHash, keyPrefix, product_id, rate_limit || 0);
+  try {
+    db.prepare(`
+      INSERT INTO subscriptions (id, customer_ref, name, key_hash, key_prefix, product_id, rate_limit)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, customer_ref, name, keyHash, keyPrefix, product_id, rate_limit || 0);
+  } catch(e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: `Customer ref "${customer_ref}" already has a subscription for this product.` });
+    throw e;
+  }
 
   // Return the raw key ONCE - it cannot be retrieved again
-  res.status(201).json({ id, name, key: rawKey, key_prefix: keyPrefix, product_id });
+  res.status(201).json({ id, customer_ref, name, key: rawKey, key_prefix: keyPrefix, product_id });
 });
 
 router.patch('/subscriptions/:id', (req, res) => {
   const db = getDb();
-  const { enabled, name, rate_limit } = req.body;
+  const { enabled, name, customer_ref, rate_limit, product_id } = req.body;
   const updates = [];
   const vals = [];
 
-  if (enabled !== undefined)    { updates.push('enabled = ?');    vals.push(enabled ? 1 : 0); }
-  if (name !== undefined)       { updates.push('name = ?');       vals.push(name); }
-  if (rate_limit !== undefined) { updates.push('rate_limit = ?'); vals.push(rate_limit); }
+  if (enabled !== undefined)       { updates.push('enabled = ?');      vals.push(enabled ? 1 : 0); }
+  if (name !== undefined)          { updates.push('name = ?');         vals.push(name); }
+  if (customer_ref !== undefined)  { updates.push('customer_ref = ?'); vals.push(customer_ref); }
+  if (rate_limit !== undefined)    { updates.push('rate_limit = ?');   vals.push(rate_limit); }
+  if (product_id !== undefined)    { updates.push('product_id = ?');   vals.push(product_id); }
 
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(req.params.id);

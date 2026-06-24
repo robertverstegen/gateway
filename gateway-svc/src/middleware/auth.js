@@ -2,7 +2,7 @@
 const crypto = require('crypto');
 const { getDb } = require('../db/database');
 
-const rateLimitWindows = new Map(); // key_hash -> [timestamps]
+const rateLimitWindows = new Map();
 
 function hashKey(key) {
   return crypto.createHash('sha256').update(key).digest('hex');
@@ -26,6 +26,10 @@ function checkRateLimit(keyHash, limitPerMinute) {
 function authMiddleware(req, res, next) {
   const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '');
 
+  // x-subscription-id is the customer-supplied business reference (e.g. a customer ID).
+  // When provided, the gateway verifies the key belongs to that customer ref.
+  const subscriptionId = req.headers['x-subscription-id'];
+
   if (!apiKey) {
     return res.status(401).json({ error: 'Missing API key. Provide via X-Api-Key header or Bearer token.' });
   }
@@ -45,6 +49,16 @@ function authMiddleware(req, res, next) {
 
   if (!sub) {
     return res.status(401).json({ error: 'Invalid API key.' });
+  }
+
+  // Validate x-subscription-id against the customer_ref stored on the subscription.
+  // Two subscriptions can share the same customer_ref (different products), so this
+  // confirms the key's owner matches the caller's claimed identity.
+  if (subscriptionId && subscriptionId !== sub.customer_ref) {
+    return res.status(401).json({
+      error: 'Subscription ID does not match the provided API key.',
+      hint: 'X-Subscription-Id must match the customer reference of the subscription this key belongs to.'
+    });
   }
 
   if (!sub.enabled) {

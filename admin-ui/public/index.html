@@ -277,7 +277,8 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-add-sub')">×</button>
     <h3>New Subscription</h3>
-    <div class="form-group"><label>Name / Owner</label><input id="s-name" placeholder="e.g. team-analytics"></div>
+    <div class="form-group"><label>Customer Reference</label><input id="s-ref" placeholder="e.g. CUST-001 or existing customer ID"></div>
+    <div class="form-group"><label>Name / Description</label><input id="s-name" placeholder="e.g. team-analytics"></div>
     <div class="form-group"><label>Product</label><select id="s-product"></select></div>
     <div class="form-group"><label>Rate Limit (req/min, 0 = unlimited)</label><input id="s-rate" type="number" value="0" min="0"></div>
     <div class="form-actions">
@@ -311,6 +312,29 @@
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModal('modal-edit-backend')">Cancel</button>
       <button class="btn btn-primary" onclick="saveEditBackend()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-edit-sub" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-edit-sub')">×</button>
+    <h3>Edit Subscription</h3>
+    <input type="hidden" id="es-id">
+    <div class="form-group"><label>Customer Reference</label><input id="es-ref" placeholder="e.g. CUST-001"></div>
+    <div class="form-group"><label>Name / Description</label><input id="es-name"></div>
+    <div class="form-group"><label>Product</label><select id="es-product"></select></div>
+    <div class="form-group"><label>Rate Limit (req/min, 0 = unlimited)</label><input id="es-rate" type="number" min="0"></div>
+    <div class="form-group">
+      <label>Status</label>
+      <select id="es-enabled">
+        <option value="1">Enabled</option>
+        <option value="0">Disabled</option>
+      </select>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modal-edit-sub')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditSub()">Save Changes</button>
     </div>
   </div>
 </div>
@@ -550,9 +574,10 @@ async function loadSubscriptions() {
     const subs = await api('GET', '/admin/subscriptions');
     const el = document.getElementById('subscriptions-table');
     if (!subs.length) { el.innerHTML = '<div class="no-data">No subscriptions yet.</div>'; return; }
-    el.innerHTML = `<table><thead><tr><th>Name</th><th>Key Prefix</th><th>Product</th><th>Backend</th><th>Rate Limit</th><th>Status</th><th>Actions</th></tr></thead><tbody>${
+    el.innerHTML = `<table><thead><tr><th>Customer Ref</th><th>Name</th><th>Key Prefix</th><th>Product</th><th>Backend</th><th>Rate Limit</th><th>Status</th><th>Actions</th></tr></thead><tbody>${
       subs.map(s => `<tr>
-        <td style="font-weight:600;">${s.name}</td>
+        <td style="font-weight:600;color:var(--accent)">${s.customer_ref}</td>
+        <td>${s.name}</td>
         <td><code style="font-family:var(--mono);font-size:12px;color:var(--accent)">${s.key_prefix}…</code></td>
         <td>${s.product_name}</td>
         <td>${s.backend_name}</td>
@@ -560,6 +585,7 @@ async function loadSubscriptions() {
         <td>${s.enabled ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-red">Disabled</span>'}</td>
         <td><div class="btn-row">
           <button class="btn btn-sm btn-ghost" onclick="toggleSub('${s.id}',${s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button>
+          <button class="btn btn-sm btn-ghost" onclick="openEditSub('${s.id}')">Edit</button>
           <button class="btn btn-sm btn-danger" onclick="deleteSub('${s.id}','${s.name}')">Revoke</button>
         </div></td>
       </tr>`).join('')
@@ -575,11 +601,46 @@ async function loadProductsForSelect() {
 
 async function addSubscription() {
   try {
-    const result = await api('POST', '/admin/subscriptions', { name: document.getElementById('s-name').value, product_id: document.getElementById('s-product').value, rate_limit: parseInt(document.getElementById('s-rate').value) || 0 });
+    const result = await api('POST', '/admin/subscriptions', { customer_ref: document.getElementById('s-ref').value.trim(), name: document.getElementById('s-name').value, product_id: document.getElementById('s-product').value, rate_limit: parseInt(document.getElementById('s-rate').value) || 0 });
     closeModal('modal-add-sub');
     document.getElementById('new-key-display').textContent = result.key;
     openModal('modal-show-key');
   } catch (e) { toast('Error: ' + e.message, 'err'); }
+}
+
+async function openEditSub(id) {
+  try {
+    const [sub, products] = await Promise.all([
+      api('GET', `/admin/subscriptions/${id}`),
+      api('GET', '/admin/products')
+    ]);
+    document.getElementById('es-id').value = sub.id;
+    document.getElementById('es-ref').value = sub.customer_ref || '';
+    document.getElementById('es-name').value = sub.name;
+    document.getElementById('es-rate').value = sub.rate_limit;
+    document.getElementById('es-enabled').value = sub.enabled ? '1' : '0';
+    const sel = document.getElementById('es-product');
+    sel.innerHTML = products.map(p =>
+      `<option value="${p.id}" ${p.id === sub.product_id ? 'selected' : ''}>${p.name} → ${p.backend_name}</option>`
+    ).join('');
+    openModal('modal-edit-sub');
+  } catch(e) { toast(e.message, 'err'); }
+}
+
+async function saveEditSub() {
+  const id = document.getElementById('es-id').value;
+  try {
+    await api('PATCH', `/admin/subscriptions/${id}`, {
+      customer_ref: document.getElementById('es-ref').value.trim(),
+      name: document.getElementById('es-name').value,
+      product_id: document.getElementById('es-product').value,
+      rate_limit: parseInt(document.getElementById('es-rate').value) || 0,
+      enabled: document.getElementById('es-enabled').value === '1'
+    });
+    closeModal('modal-edit-sub');
+    toast('Subscription updated');
+    loadSubscriptions();
+  } catch(e) { toast('Error: ' + e.message, 'err'); }
 }
 
 async function toggleSub(id, enabled) {

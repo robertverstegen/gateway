@@ -22,6 +22,7 @@ function getDb() {
 }
 
 function initSchema(db) {
+  // Base tables — these match the original schema exactly so IF NOT EXISTS is safe
   db.exec(`
     CREATE TABLE IF NOT EXISTS backends (
       id         TEXT PRIMARY KEY,
@@ -30,8 +31,10 @@ function initSchema(db) {
       config     TEXT NOT NULL,
       enabled    INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    )
+  `);
 
+  db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id          TEXT PRIMARY KEY,
       name        TEXT NOT NULL UNIQUE,
@@ -39,23 +42,26 @@ function initSchema(db) {
       description TEXT,
       enabled     INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    )
+  `);
 
+  db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
-      id           TEXT PRIMARY KEY,              -- internal UUID, never exposed
+      id           TEXT PRIMARY KEY,
       name         TEXT NOT NULL,
-      key_hash     TEXT NOT NULL UNIQUE,          -- SHA-256 of the actual API key
-      key_prefix   TEXT NOT NULL,                 -- first 10 chars for display
+      key_hash     TEXT NOT NULL UNIQUE,
+      key_prefix   TEXT NOT NULL,
       product_id   TEXT NOT NULL REFERENCES products(id),
       enabled      INTEGER NOT NULL DEFAULT 1,
-      rate_limit   INTEGER DEFAULT 0,             -- requests/minute, 0=unlimited
+      rate_limit   INTEGER DEFAULT 0,
       created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    )
+  `);
 
+  db.exec(`
     CREATE TABLE IF NOT EXISTS usage_log (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
       subscription_id   TEXT,
-      customer_ref      TEXT,
       product_id        TEXT,
       backend_id        TEXT,
       ts                TEXT NOT NULL DEFAULT (datetime('now')),
@@ -66,36 +72,37 @@ function initSchema(db) {
       latency_ms        INTEGER DEFAULT 0,
       status            TEXT NOT NULL,
       error_msg         TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_usage_ts       ON usage_log(ts);
-    CREATE INDEX IF NOT EXISTS idx_usage_sub      ON usage_log(subscription_id);
-    CREATE INDEX IF NOT EXISTS idx_usage_customer ON usage_log(customer_ref);
-    CREATE INDEX IF NOT EXISTS idx_usage_backend  ON usage_log(backend_id);
+    )
   `);
 
-  // Migrate existing subscriptions table if customer_ref column is missing
-  const cols = db.prepare("PRAGMA table_info(subscriptions)").all().map(c => c.name);
-  if (!cols.includes('customer_ref')) {
-    // SQLite requires a default for NOT NULL on existing rows — add nullable first, backfill, done
+  // Base indexes — safe on original schema
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_ts      ON usage_log(ts)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_sub     ON usage_log(subscription_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_backend ON usage_log(backend_id)`);
+
+  // ── Migrations ──────────────────────────────────────────────────────────────
+  // Each runs independently so a failure in one doesn't block the others.
+
+  const subCols = db.prepare('PRAGMA table_info(subscriptions)').all().map(c => c.name);
+  if (!subCols.includes('customer_ref')) {
     db.exec(`ALTER TABLE subscriptions ADD COLUMN customer_ref TEXT`);
     db.exec(`UPDATE subscriptions SET customer_ref = id WHERE customer_ref IS NULL`);
   }
-  try {
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_customer_product ON subscriptions(customer_ref, product_id)`);
-  } catch(_) {}
 
-  // Migrate usage_log if customer_ref missing
-  const logCols = db.prepare("PRAGMA table_info(usage_log)").all().map(c => c.name);
+  const logCols = db.prepare('PRAGMA table_info(usage_log)').all().map(c => c.name);
   if (!logCols.includes('customer_ref')) {
     db.exec(`ALTER TABLE usage_log ADD COLUMN customer_ref TEXT`);
   }
+
+  // Indexes that depend on migrated columns — wrapped individually so they're skipped if already exist
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_customer ON usage_log(customer_ref)`); } catch(_) {}
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_customer_product ON subscriptions(customer_ref, product_id)`); } catch(_) {}
 
   seedDefaults(db);
 }
 
 function seedDefaults(db) {
-  const claudeExists = db.prepare("SELECT 1 FROM backends WHERE type = 'claude'").get();
+  const claudeExists = db.prepare("SELECT 1 FROM backends WHERE name = 'claude'").get();
   if (!claudeExists && process.env.CLAUDE_API_KEY) {
     db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'claude', 'claude', ?)`)
       .run(uuidv4(), JSON.stringify({
@@ -105,7 +112,7 @@ function seedDefaults(db) {
       }));
   }
 
-  const azureExists = db.prepare("SELECT 1 FROM backends WHERE type = 'azure_openai'").get();
+  const azureExists = db.prepare("SELECT 1 FROM backends WHERE name = 'azure_openai'").get();
   if (!azureExists && process.env.AZURE_OPENAI_ENDPOINT) {
     db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'azure_openai', 'azure_openai', ?)`)
       .run(uuidv4(), JSON.stringify({

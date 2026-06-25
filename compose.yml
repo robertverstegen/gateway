@@ -9,7 +9,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - gateway-data:/data
+      - ./data:/data    # bind mount — SQLite file is directly accessible on the host at ./data/gateway.db
     networks:
       - public
       - internal

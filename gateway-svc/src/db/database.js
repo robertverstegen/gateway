@@ -1,15 +1,15 @@
 // src/db/database.js
 const Database = require('better-sqlite3');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/gateway.db');
+const DB_PATH = process.env.DB_PATH || '/data/gateway.db';
 
 let db;
 
 function getDb() {
   if (!db) {
     const fs = require('fs');
+    const path = require('path');
     const dir = path.dirname(DB_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -22,7 +22,6 @@ function getDb() {
 }
 
 function initSchema(db) {
-  // Base tables — these match the original schema exactly so IF NOT EXISTS is safe
   db.exec(`
     CREATE TABLE IF NOT EXISTS backends (
       id         TEXT PRIMARY KEY,
@@ -48,13 +47,15 @@ function initSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id           TEXT PRIMARY KEY,
+      customer_ref TEXT NOT NULL,
       name         TEXT NOT NULL,
       key_hash     TEXT NOT NULL UNIQUE,
       key_prefix   TEXT NOT NULL,
       product_id   TEXT NOT NULL REFERENCES products(id),
       enabled      INTEGER NOT NULL DEFAULT 1,
       rate_limit   INTEGER DEFAULT 0,
-      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(customer_ref, product_id)
     )
   `);
 
@@ -62,6 +63,7 @@ function initSchema(db) {
     CREATE TABLE IF NOT EXISTS usage_log (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
       subscription_id   TEXT,
+      customer_ref      TEXT,
       product_id        TEXT,
       backend_id        TEXT,
       ts                TEXT NOT NULL DEFAULT (datetime('now')),
@@ -75,28 +77,10 @@ function initSchema(db) {
     )
   `);
 
-  // Base indexes — safe on original schema
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_ts      ON usage_log(ts)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_sub     ON usage_log(subscription_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_backend ON usage_log(backend_id)`);
-
-  // ── Migrations ──────────────────────────────────────────────────────────────
-  // Each runs independently so a failure in one doesn't block the others.
-
-  const subCols = db.prepare('PRAGMA table_info(subscriptions)').all().map(c => c.name);
-  if (!subCols.includes('customer_ref')) {
-    db.exec(`ALTER TABLE subscriptions ADD COLUMN customer_ref TEXT`);
-    db.exec(`UPDATE subscriptions SET customer_ref = id WHERE customer_ref IS NULL`);
-  }
-
-  const logCols = db.prepare('PRAGMA table_info(usage_log)').all().map(c => c.name);
-  if (!logCols.includes('customer_ref')) {
-    db.exec(`ALTER TABLE usage_log ADD COLUMN customer_ref TEXT`);
-  }
-
-  // Indexes that depend on migrated columns — wrapped individually so they're skipped if already exist
-  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_customer ON usage_log(customer_ref)`); } catch(_) {}
-  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_customer_product ON subscriptions(customer_ref, product_id)`); } catch(_) {}
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_ts       ON usage_log(ts)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_sub      ON usage_log(subscription_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_customer ON usage_log(customer_ref)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_backend  ON usage_log(backend_id)`);
 
   seedDefaults(db);
 }

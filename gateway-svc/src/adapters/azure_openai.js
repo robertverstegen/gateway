@@ -2,21 +2,19 @@
 const axios = require('axios');
 
 /**
- * Proxies OpenAI-style chat completions to Azure OpenAI and normalizes
- * the response to ensure it strictly matches the OpenAI format.
+ * Proxies OpenAI-style chat completions to Azure OpenAI.
+ * Azure uses the same request format as OpenAI including response_format,
+ * so structured outputs pass through unchanged.
  */
 async function complete(backendConfig, requestBody) {
   const { endpoint, api_key, deployment, api_version } = backendConfig;
-  const { stream } = requestBody;
 
-  if (stream) throw new Error('Streaming not yet supported.');
+  if (requestBody.stream) throw new Error('Streaming not yet supported.');
 
   const url = `${endpoint.replace(/\/$/, '')}/openai/deployments/${deployment}/chat/completions?api-version=${api_version}`;
 
-  const payload = { ...requestBody };
-
   const start = Date.now();
-  const response = await axios.post(url, payload, {
+  const response = await axios.post(url, requestBody, {
     headers: {
       'api-key': api_key,
       'content-type': 'application/json'
@@ -27,8 +25,7 @@ async function complete(backendConfig, requestBody) {
   const latency = Date.now() - start;
   const data = response.data;
 
-  // Normalize to ensure consistent shape — Azure is mostly compatible but
-  // some fields may be missing or named differently across API versions
+  // Normalize to ensure consistent shape across API versions
   const normalized = {
     id: data.id,
     object: 'chat.completion',

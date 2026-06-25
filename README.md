@@ -1,6 +1,6 @@
 # LLM API Gateway
 
-A Node.js API gateway fronting multiple LLM backends (Claude, Azure OpenAI) behind a unified OpenAI-compatible API. Runs as two Docker containers with network-level separation between the public API and the admin UI.
+A Node.js API gateway that fronts multiple LLM backends (Claude, Azure OpenAI) behind a unified OpenAI-compatible API. Runs as two isolated Docker containers. Features subscription key auth, customer references, per-backend kill switches, structured output support, usage monitoring, and a web admin UI.
 
 ---
 
@@ -12,138 +12,287 @@ Internet
    │  port 3000 (public)
    ▼
 ┌──────────────────────────────┐
-│  gateway container           │  ── public network ──► LLM APIs
+│  gateway-svc                 │  ── public network ──► LLM APIs (Claude, Azure OpenAI)
 │  POST /v1/chat/completions   │
-│  GET  /health                │  ── internal network (no internet)
-│                              │         │
-│  port 3001 (admin API)  ─────┼─────────┤
-│  /admin/*  (internal only)   │         │
+│  GET  /health                │
+│                              │
+│  port 3001 (admin API) ──────┼──── internal network (Docker internal: true, no internet)
 └──────────────────────────────┘         │
                                          │
 ┌──────────────────────────────┐         │
-│  admin-ui container          │ ◄───────┘
-│  port 8080 (loopback only)   │  internal network only
-│  Web UI + proxy → :3001      │  no internet access
+│  admin-ui                    │ ◄───────┘
+│  port 8086                   │  proxies /admin/* → gateway:3001
+│  Web dashboard               │  no direct internet access
 └──────────────────────────────┘
    │
-   │  127.0.0.1:8080 only
-   ▼
- Your browser (via VPN / SSH tunnel / internal network)
+   └── accessible via nginx / SSH tunnel
 ```
 
 ### Network isolation
 
-| Container | Networks | Internet access |
-|-----------|----------|-----------------|
-| `gateway` | `public` + `internal` | Yes (needs to call LLM APIs) |
-| `admin-ui` | `internal` only | **No** — Docker `internal: true` blocks all outbound traffic |
+| Container | Networks | Internet |
+|-----------|----------|---------|
+| `gateway` | `public` + `internal` | Yes — needs to reach LLM APIs |
+| `admin-ui` | `admin-facing` + `internal` | No — `internal: true` blocks outbound traffic |
 
-The admin API (port 3001) is never published to the host. It is only reachable from `admin-ui` via the internal Docker network.
-
-The admin UI (port 8080) is bound to `127.0.0.1` on the host — not reachable from the internet. Access it via SSH tunnel or an internal network/VPN.
+The admin API (port 3001) is never published to the host. The admin UI proxies all `/admin/*` calls to `gateway:3001` over the internal network, injecting the `X-Admin-Key` header server-side — the key never touches the browser.
 
 ---
 
 ## Quick Start
 
 ```bash
-cp .env.example .env
-# Edit .env — set ADMIN_KEY, UI_USERNAME, UI_PASSWORD, and your LLM API keys
-
-docker compose up -d
+cp .env.example .env          # fill in ADMIN_KEY, API keys, UI_USERNAME/PASSWORD
+mkdir -p data
+sudo chown -R 1000:1000 data  # node user inside container needs write access
+docker compose up -d --build
 ```
 
 - **Completions API:** `http://your-server:3000/v1/chat/completions`
-- **Admin UI:** `http://localhost:8080` (loopback only — use SSH tunnel from remote)
+- **Admin UI:** `http://your-server:8086` (proxy via nginx or SSH tunnel)
 
-SSH tunnel example:
-```bash
-ssh -L 8080:localhost:8080 user@your-server
-# Then open http://localhost:8080 in your browser
+---
+
+## Project Structure
+
+```
+gateway/
+├── docker-compose.yml
+├── .env.example
+├── README.md
+├── data/                     # SQLite database (bind-mounted, persists on host)
+│   └── gateway.db
+├── gateway-svc/              # API gateway container
+│   ├── Dockerfile
+│   ├── package.json
+│   └── src/
+│       ├── index.js          # Dual Express servers (public :3000, admin :3001)
+│       ├── adapters/
+│       │   ├── claude.js     # Anthropic API adapter
+│       │   ├── azure_openai.js
+│       │   └── index.js      # Adapter registry
+│       ├── db/
+│       │   └── database.js   # SQLite schema + seeding
+│       ├── middleware/
+│       │   └── auth.js       # Subscription key + customer ref validation
+│       └── routes/
+│           ├── completions.js # POST /v1/chat/completions
+│           └── admin.js      # Management REST API
+└── admin-ui/                 # Admin dashboard container
+    ├── Dockerfile
+    ├── package.json
+    └── src/
+        └── index.js          # Express + proxy to gateway:3001
+    └── public/
+        └── index.html        # Single-page admin dashboard
 ```
 
 ---
 
-## API Reference
+## Completions API
 
-### Completions (public, port 3000)
+### Authentication
+
+Every request requires an API key. Provide it as:
+- `X-Api-Key: gw-<key>` header
+- `Authorization: Bearer gw-<key>` header
+
+Optionally, supply `X-Subscription-Id: <customer_ref>` to verify the key belongs to the expected customer. The gateway cross-checks the key's stored customer reference and returns 401 if they don't match.
+
+### Request
 
 ```
 POST /v1/chat/completions
-X-Api-Key: gw-<subscription-key>
+X-Api-Key: gw-<your-key>
+X-Subscription-Id: CUST-001        (optional — verifies key ownership)
 Content-Type: application/json
+```
 
+```json
 {
-  "messages": [{ "role": "user", "content": "Hello!" }],
-  "temperature": 0.7
+  "messages": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "Hello!" }
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1024
 }
 ```
 
-### Management API (internal, port 3001 — proxied via admin-ui)
+### Structured Outputs
 
-All endpoints require `X-Admin-Key: <ADMIN_KEY>`.
+Both backends support structured outputs. Use the standard OpenAI `response_format` field:
 
-#### Backends
+**JSON object mode** — guarantees valid JSON output:
+```json
+{
+  "messages": [{ "role": "user", "content": "Return a JSON object with a greeting." }],
+  "response_format": { "type": "json_object" }
+}
+```
+
+**JSON schema mode** — guarantees output matching your schema:
+```json
+{
+  "messages": [{ "role": "user", "content": "Extract the name and age from: John is 30." }],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "person",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "age":  { "type": "integer" }
+        },
+        "required": ["name", "age"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
+```
+
+| Backend | `text` | `json_object` | `json_schema` |
+|---------|--------|--------------|--------------|
+| Claude (Sonnet 4.5+, Opus 4.6+) | ✅ | ✅ | ✅ |
+| Azure OpenAI (GPT-4o, GPT-4-turbo) | ✅ | ✅ | ✅ |
+
+For Claude, the gateway translates `response_format` to Claude's `output_config` format and adds the required `anthropic-beta: structured-outputs-2025-11-13` header automatically.
+
+### Response
+
+All backends return the same OpenAI-compatible format regardless of which backend handled the request:
+
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "claude-sonnet-4-6",
+  "choices": [{
+    "index": 0,
+    "message": { "role": "assistant", "content": "Hello!", "refusal": null },
+    "finish_reason": "stop",
+    "logprobs": null
+  }],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 5,
+    "total_tokens": 17,
+    "prompt_tokens_details": { "cached_tokens": 0, "audio_tokens": 0 },
+    "completion_tokens_details": { "reasoning_tokens": 0, "audio_tokens": 0, "accepted_prediction_tokens": 0, "rejected_prediction_tokens": 0 }
+  },
+  "system_fingerprint": null
+}
+```
+
+---
+
+## Routing Model
+
+```
+API Key  →  Subscription  →  Product  →  Backend
+```
+
+- A **subscription** holds an API key and belongs to one **product**
+- A **product** points to one **backend**
+- **customer_ref** is your business key (e.g. a customer ID) — set per subscription, multiple subscriptions can share the same ref across different products
+- Disabling a **backend** instantly blocks all traffic to it (kill switch)
+- Disabling a **product** blocks all subscriptions using it
+- Disabling a **subscription** blocks that specific key
+
+---
+
+## Management API
+
+All endpoints on port 3001 (internal only — access via admin UI or SSH tunnel to host).
+Requires `X-Admin-Key: <ADMIN_KEY>` header.
+
+### Backends
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /admin/backends | List backends |
-| POST | /admin/backends | Add backend |
-| PATCH | /admin/backends/:id | Update (config, name, enabled) |
-| DELETE | /admin/backends/:id | Remove |
-| POST | /admin/backends/:id/disable | **Kill switch** |
+| GET | /admin/backends | List all backends |
+| GET | /admin/backends/:id | Get backend with config |
+| POST | /admin/backends | Create backend |
+| PATCH | /admin/backends/:id | Update name, config, or enabled |
+| DELETE | /admin/backends/:id | Delete |
+| POST | /admin/backends/:id/disable | Kill switch — blocks all traffic instantly |
 | POST | /admin/backends/:id/enable | Re-enable |
 
-#### Products
+Backend config shapes:
+```json
+// Claude
+{ "api_key": "sk-ant-...", "model": "claude-sonnet-4-6", "max_tokens": 4096 }
+
+// Azure OpenAI
+{ "endpoint": "https://YOUR.openai.azure.com", "api_key": "...", "deployment": "gpt-4", "api_version": "2024-02-15-preview" }
+```
+
+### Products
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | /admin/products | List |
-| POST | /admin/products | Create |
+| POST | /admin/products | Create (`name`, `backend_id`, `description`) |
 | PATCH | /admin/products/:id | Update |
 | DELETE | /admin/products/:id | Delete |
 
-#### Subscriptions
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /admin/subscriptions | List (key prefix only) |
-| POST | /admin/subscriptions | Create — returns key **once** |
-| PATCH | /admin/subscriptions/:id | Enable/disable, rate limit |
-| DELETE | /admin/subscriptions/:id | Revoke |
+### Subscriptions
 
-#### Stats & Logs
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /admin/stats | Aggregates, hourly chart, recent errors |
-| GET | /admin/usage | Raw log (filter: from, to, backend_id, status, limit) |
+| GET | /admin/subscriptions | List (key prefix only — full key shown once at creation) |
+| GET | /admin/subscriptions/:id | Get single subscription |
+| POST | /admin/subscriptions | Create — returns the raw key **once** |
+| PATCH | /admin/subscriptions/:id | Update name, customer_ref, product, rate limit, enabled |
+| DELETE | /admin/subscriptions/:id | Revoke key |
+
+Create body: `{ "name": "...", "customer_ref": "CUST-001", "product_id": "...", "rate_limit": 60 }`
+
+### Stats & Logs
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /admin/stats | Totals, per-backend breakdown, hourly chart, recent errors |
+| GET | /admin/usage | Raw log — query params: `from`, `to`, `backend_id`, `subscription_id`, `status`, `limit` |
 
 ---
 
 ## Adding a New Backend Type
 
-1. Create `src/adapters/yourtype.js` with `complete(config, body)` returning `{ _raw, _latency, normalized }` (normalized = OpenAI format)
-2. Register in `src/adapters/index.js`
+1. Create `gateway-svc/src/adapters/yourtype.js` and export `complete(config, body)` returning `{ _raw, _latency, normalized }` where `normalized` matches the OpenAI `chat.completion` format.
+2. Register it in `gateway-svc/src/adapters/index.js`.
 
-That's it — the new type appears in the UI and API automatically.
+The new type appears in the admin UI and API automatically.
 
 ---
 
 ## Environment Variables
 
-### Gateway
+### Gateway (`gateway-svc`)
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | Public completions port |
 | `ADMIN_PORT` | `3001` | Internal admin API port |
 | `ADMIN_BIND` | `0.0.0.0` | Admin bind address |
-| `DB_PATH` | `/data/gateway.db` | SQLite path |
+| `DB_PATH` | `/data/gateway.db` | SQLite database path |
 | `ADMIN_KEY` | `changeme` | Shared admin key |
-| `CLAUDE_API_KEY` | — | Seeds Claude backend on first boot |
-| `AZURE_OPENAI_ENDPOINT` | — | Seeds Azure backend on first boot |
+| `CLAUDE_API_KEY` | — | Auto-seeds Claude backend on first boot |
+| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Default Claude model |
+| `AZURE_OPENAI_ENDPOINT` | — | Auto-seeds Azure backend on first boot |
+| `AZURE_OPENAI_KEY` | — | Azure API key |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-4` | Azure deployment name |
+| `AZURE_OPENAI_API_VERSION` | `2024-02-15-preview` | Azure API version |
 
-### Admin UI
+### Admin UI (`admin-ui`)
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8080` | UI listen port |
-| `GATEWAY_ADMIN_URL` | `http://gateway:3001` | Gateway internal admin URL |
-| `ADMIN_KEY` | `changeme` | Forwarded to gateway API calls |
-| `UI_USERNAME` | — | Enable HTTP basic auth on the UI |
-| `UI_PASSWORD` | — | HTTP basic auth password |
+| `PORT` | `8086` | UI listen port |
+| `GATEWAY_ADMIN_URL` | `http://gateway:3001` | Internal gateway admin URL |
+| `ADMIN_KEY` | `changeme` | Injected as `X-Admin-Key` on all proxied requests |
+| `UI_USERNAME` | — | Enables HTTP Basic Auth on the UI |
+| `UI_PASSWORD` | — | HTTP Basic Auth password |

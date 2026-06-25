@@ -155,7 +155,7 @@ router.delete('/products/:id', (req, res) => {
 router.get('/subscriptions', (req, res) => {
   const db = getDb();
   const subs = db.prepare(`
-    SELECT s.id, s.customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
+    SELECT s.id, COALESCE(s.customer_ref, s.id) as customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
            p.name as product_name, b.name as backend_name
     FROM subscriptions s
     JOIN products p ON s.product_id = p.id
@@ -168,7 +168,7 @@ router.get('/subscriptions', (req, res) => {
 router.get('/subscriptions/:id', (req, res) => {
   const db = getDb();
   const sub = db.prepare(`
-    SELECT s.id, s.customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
+    SELECT s.id, COALESCE(s.customer_ref, s.id) as customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
            p.name as product_name, b.name as backend_name
     FROM subscriptions s
     JOIN products p ON s.product_id = p.id
@@ -294,14 +294,17 @@ router.get('/stats', (req, res) => {
     ORDER BY u.ts DESC LIMIT 20
   `).all();
 
-  const hourly = db.prepare(`
+  const { subscription_id: statsSubId } = req.query;
+  let hourlyQuery = `
     SELECT strftime('%Y-%m-%dT%H:00:00', ts) as hour,
       COUNT(*) as requests,
       SUM(total_tokens) as tokens
     FROM usage_log
     WHERE ts >= datetime('now', '-24 hours')
-    GROUP BY hour ORDER BY hour
-  `).all();
+  `;
+  if (statsSubId) hourlyQuery += ` AND subscription_id = '${statsSubId.replace(/'/g, "''")}`;
+  hourlyQuery += ' GROUP BY hour ORDER BY hour';
+  const hourly = db.prepare(hourlyQuery).all();
 
   res.json({ totals, byBackend, recentErrors, hourly });
 });

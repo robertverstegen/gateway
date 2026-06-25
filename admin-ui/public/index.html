@@ -173,7 +173,12 @@
       </div>
       <div class="two-col">
         <div class="card">
-          <div class="card-header"><span class="card-title">Requests (last 24h)</span></div>
+          <div class="card-header">
+            <span class="card-title">Requests (last 24h)</span>
+            <select id="chart-sub-filter" onchange="loadHourlyChart()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:8px;font-size:12px;">
+              <option value="">All subscriptions</option>
+            </select>
+          </div>
           <div class="chart-area" id="hourly-chart"><div class="loading">Loading…</div></div>
         </div>
         <div class="card">
@@ -387,6 +392,25 @@ function openModal(id) {
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
+async function loadHourlyChart() {
+  const chartEl = document.getElementById('hourly-chart');
+  chartEl.innerHTML = '<div class="loading">Loading…</div>';
+  const subId = document.getElementById('chart-sub-filter')?.value || '';
+  try {
+    const stats = await api('GET', `/admin/stats${subId ? '?subscription_id=' + subId : ''}`);
+    if (stats.hourly && stats.hourly.length) {
+      const max = Math.max(...stats.hourly.map(h => h.requests), 1);
+      chartEl.innerHTML = stats.hourly.map(h => {
+        const pct = Math.max(8, (h.requests / max) * 140);
+        const label = h.hour.substring(11, 16);
+        return `<div class="bar-wrap"><div class="bar" style="height:${pct}px" title="${h.requests} req"></div><div class="bar-label">${label}</div></div>`;
+      }).join('');
+    } else {
+      chartEl.innerHTML = '<div class="no-data">No data for this subscription</div>';
+    }
+  } catch(e) { chartEl.innerHTML = '<div class="no-data">Failed to load</div>'; }
+}
+
 async function loadDashboard() {
   try {
     const stats = await api('GET', '/admin/stats');
@@ -398,18 +422,15 @@ async function loadDashboard() {
     document.getElementById('stat-tokens').textContent = fmtNum(t.total_tokens || 0);
     document.getElementById('stat-latency').textContent = t.avg_latency_ms ? Math.round(t.avg_latency_ms) + 'ms' : '—';
 
+    // Populate subscription dropdown (once per dashboard load)
+    const subSel = document.getElementById('chart-sub-filter');
+    const currentVal = subSel.value;
+    const subs = await api('GET', '/admin/subscriptions').catch(() => []);
+    subSel.innerHTML = '<option value="">All subscriptions</option>' +
+      subs.map(s => `<option value="${s.id}" ${s.id === currentVal ? 'selected' : ''}>${s.customer_ref} — ${s.name}</option>`).join('');
+
     // Hourly chart
-    const chartEl = document.getElementById('hourly-chart');
-    if (stats.hourly && stats.hourly.length) {
-      const max = Math.max(...stats.hourly.map(h => h.requests), 1);
-      chartEl.innerHTML = stats.hourly.map(h => {
-        const pct = Math.max(8, (h.requests / max) * 140);
-        const label = h.hour.substring(11, 16);
-        return `<div class="bar-wrap"><div class="bar" style="height:${pct}px" title="${h.requests} req"></div><div class="bar-label">${label}</div></div>`;
-      }).join('');
-    } else {
-      chartEl.innerHTML = '<div class="no-data">No data yet</div>';
-    }
+    await loadHourlyChart();
 
     // Backend stats
     const bsEl = document.getElementById('backend-stats');

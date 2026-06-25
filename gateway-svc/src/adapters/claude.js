@@ -65,6 +65,7 @@ async function complete(backendConfig, requestBody) {
     }
   }
 
+  console.log('[Claude adapter] payload:', JSON.stringify(payload, null, 2));
   const start = Date.now();
   const response = await axios.post('https://api.anthropic.com/v1/messages', payload, {
     headers: {
@@ -77,6 +78,9 @@ async function complete(backendConfig, requestBody) {
 
   const latency = Date.now() - start;
   const data = response.data;
+  console.log('[Claude adapter] response stop_reason:', data.stop_reason);
+  console.log('[Claude adapter] response content[0].type:', data.content?.[0]?.type);
+  console.log('[Claude adapter] raw response:', JSON.stringify(data, null, 2));
 
   const promptTokens = data.usage?.input_tokens || 0;
   const completionTokens = data.usage?.output_tokens || 0;

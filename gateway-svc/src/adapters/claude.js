@@ -7,8 +7,12 @@ const axios = require('axios');
  *
  * Structured output translation:
  *   OpenAI:  response_format: { type: "json_schema", json_schema: { name, schema, strict } }
- *   Claude:  output_config: { format: { type: "json_schema", schema: { ... } } }
- *            + anthropic-beta: structured-outputs-2025-11-13
+ *   Claude:  output_config: { format: { type: "json_schema", schema: <schema> } }
+ *
+ *   OpenAI:  response_format: { type: "json_object" }
+ *   Claude:  output_config: { format: { type: "json_object" } }
+ *
+ * Claude structured outputs are GA — no beta header required.
  */
 async function complete(backendConfig, requestBody) {
   const { api_key, model, max_tokens = 4096 } = backendConfig;
@@ -38,24 +42,26 @@ async function complete(backendConfig, requestBody) {
   };
 
   // Translate OpenAI response_format -> Claude output_config
-  const extraHeaders = {};
-  if (response_format) {
+  if (response_format && response_format.type !== 'text') {
     if (response_format.type === 'json_object') {
-      // Simple JSON mode — Claude supports this via output_config
-      payload.output_config = { format: { type: 'json_object' } };
-      extraHeaders['anthropic-beta'] = 'structured-outputs-2025-11-13';
+      payload.output_config = {
+        format: { type: 'json_object' }
+      };
     } else if (response_format.type === 'json_schema') {
+      // OpenAI wraps the schema under json_schema.schema
+      // Claude wants the schema directly under format.schema
       const schema = response_format.json_schema?.schema;
-      if (!schema) throw new Error('response_format.json_schema.schema is required for type "json_schema".');
+      if (!schema) {
+        throw new Error('response_format.json_schema.schema is required for type "json_schema".');
+      }
       payload.output_config = {
         format: {
           type: 'json_schema',
-          schema
+          schema  // pass the JSON Schema object directly
         }
       };
-      extraHeaders['anthropic-beta'] = 'structured-outputs-2025-11-13';
-    } else if (response_format.type !== 'text') {
-      throw new Error(`Unsupported response_format.type: "${response_format.type}". Supported: "text", "json_object", "json_schema".`);
+    } else {
+      throw new Error(`Unsupported response_format.type: "${response_format.type}". Supported values: "text", "json_object", "json_schema".`);
     }
   }
 
@@ -64,8 +70,7 @@ async function complete(backendConfig, requestBody) {
     headers: {
       'x-api-key': api_key,
       'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-      ...extraHeaders
+      'content-type': 'application/json'
     },
     timeout: 120000
   });

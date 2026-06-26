@@ -295,16 +295,20 @@ router.get('/stats', (req, res) => {
   `).all();
 
   const { subscription_id: statsSubId } = req.query;
+  const hourlyParams = [];
   let hourlyQuery = `
     SELECT strftime('%Y-%m-%dT%H:00:00', ts) as hour,
+      COALESCE(s.name, 'unknown') as subscription_name,
+      u.subscription_id,
       COUNT(*) as requests,
-      SUM(total_tokens) as tokens
-    FROM usage_log
-    WHERE ts >= datetime('now', '-24 hours')
+      SUM(u.total_tokens) as tokens
+    FROM usage_log u
+    LEFT JOIN subscriptions s ON u.subscription_id = s.id
+    WHERE u.ts >= datetime('now', '-24 hours')
   `;
-  if (statsSubId) hourlyQuery += ` AND subscription_id = '${statsSubId.replace(/'/g, "''")}`;
-  hourlyQuery += ' GROUP BY hour ORDER BY hour';
-  const hourly = db.prepare(hourlyQuery).all();
+  if (statsSubId) { hourlyQuery += ' AND u.subscription_id = ?'; hourlyParams.push(statsSubId); }
+  hourlyQuery += ' GROUP BY hour, u.subscription_id ORDER BY hour';
+  const hourly = db.prepare(hourlyQuery).all(...hourlyParams);
 
   res.json({ totals, byBackend, recentErrors, hourly });
 });

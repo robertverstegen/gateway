@@ -398,18 +398,56 @@ async function loadHourlyChart() {
   const subId = document.getElementById('chart-sub-filter')?.value || '';
   try {
     const stats = await api('GET', `/admin/stats${subId ? '?subscription_id=' + subId : ''}`);
-    if (stats.hourly && stats.hourly.length) {
-      const max = Math.max(...stats.hourly.map(h => h.requests), 1);
-      chartEl.innerHTML = stats.hourly.map(h => {
-        const pct = Math.max(8, (h.requests / max) * 140);
-        const label = h.hour.substring(11, 16);
-        return `<div class="bar-wrap"><div class="bar" style="height:${pct}px" title="${h.requests} req"></div><div class="bar-label">${label}</div></div>`;
-      }).join('');
-    } else {
-      chartEl.innerHTML = '<div class="no-data">No data for this subscription</div>';
+    if (!stats.hourly || !stats.hourly.length) {
+      chartEl.innerHTML = '<div class="no-data">No data yet</div>';
+      return;
     }
+
+    const hours = [...new Set(stats.hourly.map(r => r.hour))].sort();
+    const subNames = [...new Set(stats.hourly.map(r => r.subscription_name))];
+    const palette = ['#5b7cff','#a855f7','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6'];
+    const subColors = {};
+    subNames.forEach((s, i) => subColors[s] = palette[i % palette.length]);
+
+    const hourTotals = {};
+    stats.hourly.forEach(r => { hourTotals[r.hour] = (hourTotals[r.hour] || 0) + r.requests; });
+    const maxTotal = Math.max(...Object.values(hourTotals), 1);
+    const chartHeight = 140;
+
+    const bars = hours.map(hour => {
+      const rowsForHour = stats.hourly.filter(r => r.hour === hour);
+      const total = hourTotals[hour] || 0;
+      const label = hour.substring(11, 16);
+      const totalHeight = Math.max(4, (total / maxTotal) * chartHeight);
+      const segments = subNames.map(sub => {
+        const row = rowsForHour.find(r => r.subscription_name === sub);
+        const count = row ? row.requests : 0;
+        if (!count) return '';
+        const segH = Math.max(2, Math.round((count / total) * totalHeight));
+        return `<div style="width:100%;height:${segH}px;background:${subColors[sub]};opacity:0.85;" title="${sub}: ${count} req"></div>`;
+      }).filter(Boolean).reverse();
+      return `<div class="bar-wrap">
+        <div style="width:100%;height:${chartHeight}px;display:flex;flex-direction:column;justify-content:flex-end;">
+          <div style="width:100%;display:flex;flex-direction:column;border-radius:4px 4px 0 0;overflow:hidden;">${segments.join('')}</div>
+        </div>
+        <div class="bar-label" title="${hour}">${label}</div>
+      </div>`;
+    });
+
+    const legend = subNames.map(s =>
+      `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11px;color:var(--muted)">
+        <span style="width:10px;height:10px;border-radius:2px;background:${subColors[s]};display:inline-block;"></span>${s}
+      </span>`
+    ).join('');
+
+    chartEl.style.height = "auto"; chartEl.style.display = "block";
+    chartEl.innerHTML = `<div style="width:100%;">
+      <div style="display:flex;align-items:flex-end;gap:4px;height:140px;margin-bottom:8px;">${bars.join('')}</div>
+      <div style="padding:0 4px;flex-wrap:wrap;display:flex;">${legend}</div>
+    </div>`;
   } catch(e) { chartEl.innerHTML = '<div class="no-data">Failed to load</div>'; }
 }
+
 
 async function loadDashboard() {
   try {

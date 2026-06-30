@@ -254,6 +254,7 @@
       <select id="b-type" onchange="updateConfigHelp()">
         <option value="claude">claude</option>
         <option value="azure_openai">azure_openai</option>
+        <option value="mistral">mistral</option>
       </select>
     </div>
     <div class="form-group"><label>Configuration (JSON)</label><textarea id="b-config" rows="7" cols="50" style="font-family:var(--mono);font-size:12px;"></textarea></div>
@@ -765,7 +766,8 @@ function escHtml(s) {
 
 const CONFIG_TEMPLATES = {
   claude: JSON.stringify({ api_key: "sk-ant-...", model: "claude-sonnet-4-6", max_tokens: 4096 }, null, 2),
-  azure_openai: JSON.stringify({ endpoint: "https://YOUR_RESOURCE.openai.azure.com", api_key: "...", deployment: "gpt-4", api_version: "2024-02-15-preview" }, null, 2)
+  azure_openai: JSON.stringify({ endpoint: "https://YOUR_RESOURCE.openai.azure.com", api_key: "...", deployment: "gpt-4", api_version: "2024-02-15-preview" }, null, 2),
+  mistral: JSON.stringify({ api_key: "...", model: "mistral-large-latest" }, null, 2)
 };
 
 function updateConfigHelp() {

@@ -1,10 +1,12 @@
 // src/adapters/index.js
 const claude = require('./claude');
 const azure_openai = require('./azure_openai');
+const mistral = require('./mistral');
 
 const adapters = {
   claude,
-  azure_openai
+  azure_openai,
+  mistral
 };
 
 function getAdapter(type) {

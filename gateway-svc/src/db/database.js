@@ -106,6 +106,15 @@ function seedDefaults(db) {
         api_version: process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview'
       }));
   }
+
+  const mistralExists = db.prepare("SELECT 1 FROM backends WHERE name = 'mistral'").get();
+  if (!mistralExists && process.env.MISTRAL_API_KEY) {
+    db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'mistral', 'mistral', ?)`)
+      .run(uuidv4(), JSON.stringify({
+        api_key: process.env.MISTRAL_API_KEY,
+        model: process.env.MISTRAL_MODEL || 'mistral-large-latest'
+      }));
+  }
 }
 
 module.exports = { getDb };

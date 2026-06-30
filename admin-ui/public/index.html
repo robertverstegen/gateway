@@ -1,10 +1,10 @@
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LLM Gateway — Admin</title>
-  <style>
+  <style type="text/css">
     :root {
       --bg: #0f1117;
       --surface: #1a1d27;
@@ -141,24 +141,24 @@
 </head>
 <body>
 <div class="layout">
-  <aside class="sidebar">
+  <div class="sidebar">
     <div class="sidebar-logo">
       <h1>LLM <span>Gateway</span></h1>
       <p>API Management Console</p>
     </div>
-    <nav class="nav">
+    <div class="nav">
       <button class="nav-item active" onclick="showPage('dashboard')"><span class="icon">📊</span> Dashboard</button>
       <button class="nav-item" onclick="showPage('backends')"><span class="icon">🔌</span> Backends</button>
       <button class="nav-item" onclick="showPage('products')"><span class="icon">📦</span> Products</button>
       <button class="nav-item" onclick="showPage('subscriptions')"><span class="icon">🔑</span> Subscriptions</button>
       <button class="nav-item" onclick="showPage('logs')"><span class="icon">📋</span> Usage Logs</button>
-    </nav>
-    <div class="sidebar-footer">
-      v1.0.0 · <a href="/health" target="_blank" style="color:var(--accent);text-decoration:none;">Health check ↗</a>
     </div>
-  </aside>
+    <div class="sidebar-footer">
+      v1.0.0 · <a href="/health" rel="noopener" style="color:var(--accent);text-decoration:none;">Health check ↗</a>
+    </div>
+  </div>
 
-  <main class="main">
+  <div class="main">
     <!-- DASHBOARD -->
     <div id="page-dashboard" class="page active">
       <div class="page-header">
@@ -240,7 +240,7 @@
         <div class="table-wrap" id="logs-table"><div class="loading">Loading…</div></div>
       </div>
     </div>
-  </main>
+  </div>
 </div>
 
 <!-- MODALS -->
@@ -248,7 +248,7 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-add-backend')">×</button>
     <h3>Add Backend</h3>
-    <div class="form-group"><label>Name</label><input id="b-name" placeholder="e.g. claude-prod"></div>
+    <div class="form-group"><label>Name (e.g. claude-prod)</label><input id="b-name" /></div>
     <div class="form-group">
       <label>Type</label>
       <select id="b-type" onchange="updateConfigHelp()">
@@ -256,7 +256,7 @@
         <option value="azure_openai">azure_openai</option>
       </select>
     </div>
-    <div class="form-group"><label>Configuration (JSON)</label><textarea id="b-config" rows="7" style="font-family:var(--mono);font-size:12px;"></textarea></div>
+    <div class="form-group"><label>Configuration (JSON)</label><textarea id="b-config" rows="7" cols="50" style="font-family:var(--mono);font-size:12px;"></textarea></div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModal('modal-add-backend')">Cancel</button>
       <button class="btn btn-primary" onclick="addBackend()">Create Backend</button>
@@ -268,9 +268,9 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-add-product')">×</button>
     <h3>Add Product</h3>
-    <div class="form-group"><label>Name</label><input id="p-name" placeholder="e.g. gpt4-internal"></div>
+    <div class="form-group"><label>Name (e.g. gpt4-internal)</label><input id="p-name" /></div>
     <div class="form-group"><label>Backend</label><select id="p-backend"></select></div>
-    <div class="form-group"><label>Description</label><input id="p-desc" placeholder="Optional description"></div>
+    <div class="form-group"><label>Description (optional)</label><input id="p-desc" /></div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModal('modal-add-product')">Cancel</button>
       <button class="btn btn-primary" onclick="addProduct()">Create Product</button>
@@ -282,10 +282,10 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-add-sub')">×</button>
     <h3>New Subscription</h3>
-    <div class="form-group"><label>Customer Reference</label><input id="s-ref" placeholder="e.g. CUST-001 or existing customer ID"></div>
-    <div class="form-group"><label>Name / Description</label><input id="s-name" placeholder="e.g. team-analytics"></div>
+    <div class="form-group"><label>Customer Reference (e.g. CUST-001)</label><input id="s-ref" /></div>
+    <div class="form-group"><label>Name / Description (e.g. team-analytics)</label><input id="s-name" /></div>
     <div class="form-group"><label>Product</label><select id="s-product"></select></div>
-    <div class="form-group"><label>Rate Limit (req/min, 0 = unlimited)</label><input id="s-rate" type="number" value="0" min="0"></div>
+    <div class="form-group"><label>Rate Limit (req/min, 0 = unlimited)</label><input id="s-rate" type="text" value="0" /></div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModal('modal-add-sub')">Cancel</button>
       <button class="btn btn-primary" onclick="addSubscription()">Generate Key</button>
@@ -310,10 +310,10 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-edit-backend')">×</button>
     <h3>Edit Backend</h3>
-    <input type="hidden" id="eb-id">
-    <div class="form-group"><label>Name</label><input id="eb-name" placeholder="e.g. claude-prod"></div>
-    <div class="form-group"><label>Type</label><input id="eb-type" disabled style="opacity:0.5;cursor:not-allowed"></div>
-    <div class="form-group"><label>Configuration (JSON)</label><textarea id="eb-config" rows="7" style="font-family:var(--mono);font-size:12px;"></textarea></div>
+    <input type="hidden" id="eb-id" />
+    <div class="form-group"><label>Name (e.g. claude-prod)</label><input id="eb-name" /></div>
+    <div class="form-group"><label>Type</label><input id="eb-type" disabled="disabled" style="opacity:0.5;cursor:not-allowed" /></div>
+    <div class="form-group"><label>Configuration (JSON)</label><textarea id="eb-config" rows="7" cols="50" style="font-family:var(--mono);font-size:12px;"></textarea></div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModal('modal-edit-backend')">Cancel</button>
       <button class="btn btn-primary" onclick="saveEditBackend()">Save Changes</button>
@@ -325,11 +325,11 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-edit-sub')">×</button>
     <h3>Edit Subscription</h3>
-    <input type="hidden" id="es-id">
-    <div class="form-group"><label>Customer Reference</label><input id="es-ref" placeholder="e.g. CUST-001"></div>
-    <div class="form-group"><label>Name / Description</label><input id="es-name"></div>
+    <input type="hidden" id="es-id" />
+    <div class="form-group"><label>Customer Reference (e.g. CUST-001)</label><input id="es-ref" /></div>
+    <div class="form-group"><label>Name / Description</label><input id="es-name" /></div>
     <div class="form-group"><label>Product</label><select id="es-product"></select></div>
-    <div class="form-group"><label>Rate Limit (req/min, 0 = unlimited)</label><input id="es-rate" type="number" min="0"></div>
+    <div class="form-group"><label>Rate Limit (req/min, 0 = unlimited)</label><input id="es-rate" type="text" /></div>
     <div class="form-group">
       <label>Status</label>
       <select id="es-enabled">
@@ -346,7 +346,8 @@
 
 <div class="toast-container" id="toasts"></div>
 
-<script>
+<script type="text/javascript">
+//<![CDATA[
 const API = '';
 
 function adminHeaders() {
@@ -382,6 +383,16 @@ function showPage(name) {
   const loaders = { dashboard: loadDashboard, backends: loadBackends, products: loadProducts, subscriptions: loadSubscriptions, logs: loadLogs };
   if (loaders[name]) loaders[name]();
 }
+
+// type="number" is not valid in XHTML 1.0 Strict, so rate-limit fields use type="text"
+// with this filter restricting input to digits only, client-side
+function restrictToDigits(inputId) {
+  const el = document.getElementById(inputId);
+  if (el) el.addEventListener('input', () => {
+    el.value = el.value.replace(/[^0-9]/g, '');
+  });
+}
+['s-rate', 'es-rate'].forEach(restrictToDigits);
 
 function openModal(id) {
   document.getElementById(id).classList.add('open');
@@ -424,7 +435,7 @@ async function loadHourlyChart() {
         const count = row ? row.requests : 0;
         if (!count) return '';
         const segH = Math.max(2, Math.round((count / total) * totalHeight));
-        return `<div style="width:100%;height:${segH}px;background:${subColors[sub]};opacity:0.85;" title="${sub}: ${count} req"></div>`;
+        return `<div style="width:100%;height:${segH}px;background:${subColors[sub]};opacity:0.85;" title="${escHtml(sub)}: ${count} req"></div>`;
       }).filter(Boolean).reverse();
       return `<div class="bar-wrap">
         <div style="width:100%;height:${chartHeight}px;display:flex;flex-direction:column;justify-content:flex-end;">
@@ -436,7 +447,7 @@ async function loadHourlyChart() {
 
     const legend = subNames.map(s =>
       `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11px;color:var(--muted)">
-        <span style="width:10px;height:10px;border-radius:2px;background:${subColors[s]};display:inline-block;"></span>${s}
+        <span style="width:10px;height:10px;border-radius:2px;background:${subColors[s]};display:inline-block;"></span>${escHtml(s)}
       </span>`
     ).join('');
 
@@ -465,7 +476,7 @@ async function loadDashboard() {
     const currentVal = subSel.value;
     const subs = await api('GET', '/admin/subscriptions').catch(() => []);
     subSel.innerHTML = '<option value="">All subscriptions</option>' +
-      subs.map(s => `<option value="${s.id}" ${s.id === currentVal ? 'selected' : ''}>${s.customer_ref} — ${s.name}</option>`).join('');
+      subs.map(s => `<option value="${s.id}" ${s.id === currentVal ? 'selected' : ''}>${escHtml(s.customer_ref)} — ${escHtml(s.name)}</option>`).join('');
 
     // Hourly chart
     await loadHourlyChart();
@@ -475,7 +486,7 @@ async function loadDashboard() {
     if (stats.byBackend && stats.byBackend.length) {
       bsEl.innerHTML = `<table><thead><tr><th>Backend</th><th>Requests</th><th>Tokens</th><th>Errors</th><th>Avg ms</th></tr></thead><tbody>${
         stats.byBackend.map(b => `<tr>
-          <td>${b.name || b.backend_id?.substring(0,8) || '?'}</td>
+          <td>${escHtml(b.name || b.backend_id?.substring(0,8) || '?')}</td>
           <td>${b.requests.toLocaleString()}</td>
           <td>${fmtNum(b.tokens || 0)}</td>
           <td>${b.errors > 0 ? `<span class="badge badge-red">${b.errors}</span>` : '<span class="badge badge-green">0</span>'}</td>
@@ -491,9 +502,9 @@ async function loadDashboard() {
     if (stats.recentErrors && stats.recentErrors.length) {
       reEl.innerHTML = `<table><thead><tr><th>Time</th><th>Backend</th><th>Subscription</th><th>Error</th></tr></thead><tbody class="error-row">${
         stats.recentErrors.map(e => `<tr>
-          <td class="ts">${e.ts}</td>
-          <td>${e.backend_name || '?'}</td>
-          <td>${e.subscription_name || '?'}</td>
+          <td class="ts">${escHtml(e.ts)}</td>
+          <td>${escHtml(e.backend_name || '?')}</td>
+          <td>${escHtml(e.subscription_name || '?')}</td>
           <td class="err-msg" title="${escHtml(e.error_msg || '')}">${escHtml(e.error_msg || '')}</td>
         </tr>`).join('')
       }</tbody></table>`;
@@ -511,7 +522,7 @@ async function loadBackends() {
     if (!backends.length) { el.innerHTML = '<div class="no-data">No backends yet. Add one to get started.</div>'; return; }
     el.innerHTML = `<table><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${
       backends.map(b => `<tr>
-        <td style="font-weight:600;">${b.name}</td>
+        <td style="font-weight:600;">${escHtml(b.name)}</td>
         <td><span class="badge badge-blue">${b.type}</span></td>
         <td>${b.enabled
           ? '<span class="badge badge-green"><span class="dot"></span>Active</span>'
@@ -588,9 +599,9 @@ async function loadProducts() {
     if (!products.length) { el.innerHTML = '<div class="no-data">No products yet.</div>'; return; }
     el.innerHTML = `<table><thead><tr><th>Name</th><th>Backend</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead><tbody>${
       products.map(p => `<tr>
-        <td style="font-weight:600;">${p.name}</td>
-        <td>${p.backend_name} ${!p.backend_enabled ? '<span class="badge badge-red">backend killed</span>' : ''}</td>
-        <td style="color:var(--muted)">${p.description || '—'}</td>
+        <td style="font-weight:600;">${escHtml(p.name)}</td>
+        <td>${escHtml(p.backend_name)} ${!p.backend_enabled ? '<span class="badge badge-red">backend killed</span>' : ''}</td>
+        <td style="color:var(--muted)">${escHtml(p.description || '—')}</td>
         <td>${p.enabled ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-red">Disabled</span>'}</td>
         <td><div class="btn-row">
           <button class="btn btn-sm btn-ghost" onclick="toggleProduct('${p.id}', ${p.enabled})">${p.enabled ? 'Disable' : 'Enable'}</button>
@@ -604,7 +615,7 @@ async function loadProducts() {
 async function loadBackendsForSelect() {
   const backends = await api('GET', '/admin/backends').catch(() => []);
   const sel = document.getElementById('p-backend');
-  sel.innerHTML = backends.map(b => `<option value="${b.id}">${b.name} (${b.type})</option>`).join('');
+  sel.innerHTML = backends.map(b => `<option value="${b.id}">${escHtml(b.name)} (${escHtml(b.type)})</option>`).join('');
 }
 
 async function addProduct() {
@@ -635,11 +646,11 @@ async function loadSubscriptions() {
     if (!subs.length) { el.innerHTML = '<div class="no-data">No subscriptions yet.</div>'; return; }
     el.innerHTML = `<table><thead><tr><th>Customer Ref</th><th>Name</th><th>Key Prefix</th><th>Product</th><th>Backend</th><th>Rate Limit</th><th>Status</th><th>Actions</th></tr></thead><tbody>${
       subs.map(s => `<tr>
-        <td style="font-weight:600;color:var(--accent)">${s.customer_ref}</td>
-        <td>${s.name}</td>
-        <td><code style="font-family:var(--mono);font-size:12px;color:var(--accent)">${s.key_prefix}…</code></td>
-        <td>${s.product_name}</td>
-        <td>${s.backend_name}</td>
+        <td style="font-weight:600;color:var(--accent)">${escHtml(s.customer_ref)}</td>
+        <td>${escHtml(s.name)}</td>
+        <td><code style="font-family:var(--mono);font-size:12px;color:var(--accent)">${escHtml(s.key_prefix)}…</code></td>
+        <td>${escHtml(s.product_name)}</td>
+        <td>${escHtml(s.backend_name)}</td>
         <td>${s.rate_limit > 0 ? s.rate_limit + '/min' : '∞'}</td>
         <td>${s.enabled ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-red">Disabled</span>'}</td>
         <td><div class="btn-row">
@@ -655,7 +666,7 @@ async function loadSubscriptions() {
 async function loadProductsForSelect() {
   const products = await api('GET', '/admin/products').catch(() => []);
   const sel = document.getElementById('s-product');
-  sel.innerHTML = products.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  sel.innerHTML = products.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
 }
 
 async function addSubscription() {
@@ -680,7 +691,7 @@ async function openEditSub(id) {
     document.getElementById('es-enabled').value = sub.enabled ? '1' : '0';
     const sel = document.getElementById('es-product');
     sel.innerHTML = products.map(p =>
-      `<option value="${p.id}" ${p.id === sub.product_id ? 'selected' : ''}>${p.name} → ${p.backend_name}</option>`
+      `<option value="${p.id}" ${p.id === sub.product_id ? 'selected' : ''}>${escHtml(p.name)} → ${escHtml(p.backend_name)}</option>`
     ).join('');
     openModal('modal-edit-sub');
   } catch(e) { toast(e.message, 'err'); }
@@ -727,11 +738,11 @@ async function loadLogs() {
     if (!logs.length) { el.innerHTML = '<div class="no-data">No logs found.</div>'; return; }
     el.innerHTML = `<table><thead><tr><th>Time</th><th>Status</th><th>Subscription</th><th>Backend</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Error</th></tr></thead><tbody>${
       logs.map(l => `<tr>
-        <td class="ts">${l.ts}</td>
+        <td class="ts">${escHtml(l.ts)}</td>
         <td>${l.status === 'success' ? '<span class="badge badge-green">OK</span>' : '<span class="badge badge-red">ERR</span>'}</td>
-        <td>${l.subscription_name || l.subscription_id?.substring(0,8) || '?'}</td>
-        <td>${l.backend_name_resolved || l.backend_id?.substring(0,8) || '?'}</td>
-        <td style="font-family:var(--mono);font-size:11px">${l.model || '?'}</td>
+        <td>${escHtml(l.subscription_name || l.subscription_id?.substring(0,8) || '?')}</td>
+        <td>${escHtml(l.backend_name_resolved || l.backend_id?.substring(0,8) || '?')}</td>
+        <td style="font-family:var(--mono);font-size:11px">${escHtml(l.model || '?')}</td>
         <td>${l.total_tokens?.toLocaleString() || 0}</td>
         <td>${l.latency_ms}ms</td>
         <td class="err-msg" title="${escHtml(l.error_msg || '')}">${l.error_msg ? escHtml(l.error_msg.substring(0,60)) + '…' : '—'}</td>
@@ -769,6 +780,7 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 
 // Init
 loadDashboard();
+//]]>
 </script>
 </body>
 </html>

@@ -36,8 +36,9 @@ async function complete(backendConfig, requestBody) {
       index: c.index,
       message: {
         role: c.message?.role ?? 'assistant',
-        content: c.message?.content ?? '',
-        refusal: c.message?.refusal ?? null
+        content: c.message?.content ?? null,
+        refusal: c.message?.refusal ?? null,
+        ...(c.message?.tool_calls && { tool_calls: c.message.tool_calls })
       },
       logprobs: c.logprobs ?? null,
       finish_reason: c.finish_reason ?? 'stop'

@@ -154,7 +154,10 @@
       <button class="nav-item" onclick="showPage('logs')"><span class="icon">📋</span> Usage Logs</button>
     </div>
     <div class="sidebar-footer">
-      v1.0.0 · <a href="/health" rel="noopener" style="color:var(--accent);text-decoration:none;">Health check ↗</a>
+      v1.0.0 · <a href="/health" target="_blank" style="color:var(--accent);text-decoration:none;">Health check ↗</a>
+      <div style="margin-top:10px;">
+        <button class="btn btn-ghost" onclick="downloadBackup()" style="width:100%;font-size:11px;padding:6px 10px;">⬇ Download Backup</button>
+      </div>
     </div>
   </div>
 
@@ -779,6 +782,31 @@ function updateConfigHelp() {
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(overlay.id); });
 });
+
+async function downloadBackup() {
+  try {
+    toast('Preparing backup…');
+    const res = await fetch('/admin/backup', { headers: adminHeaders() });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast('Backup failed: ' + (err.error || res.statusText), 'err');
+      return;
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : 'gateway-backup.db';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Backup downloaded: ' + filename);
+  } catch (e) {
+    toast('Backup failed: ' + e.message, 'err');
+  }
+}
 
 // Init
 loadDashboard();

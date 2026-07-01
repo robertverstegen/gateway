@@ -318,4 +318,42 @@ router.get('/adapter-types', (req, res) => {
   res.json(getAvailableTypes());
 });
 
+// ─── BACKUP ───────────────────────────────────────────────────────────────────
+router.get('/backup', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+
+  const db = getDb();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const backupName = 'gateway-backup-' + timestamp + '.db';
+  const backupPath = path.join(os.tmpdir(), backupName);
+
+  try {
+    db.backup(backupPath)
+      .then(() => {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', 'attachment; filename="' + backupName + '"');
+
+        const stream = fs.createReadStream(backupPath);
+        stream.pipe(res);
+        stream.on('end', () => {
+          fs.unlink(backupPath, () => {});
+        });
+        stream.on('error', (err) => {
+          console.error('Backup stream error:', err);
+          if (!res.headersSent) res.status(500).json({ error: 'Failed to stream backup' });
+          fs.unlink(backupPath, () => {});
+        });
+      })
+      .catch((err) => {
+        console.error('Backup error:', err);
+        res.status(500).json({ error: 'Backup failed: ' + err.message });
+      });
+  } catch (err) {
+    console.error('Backup error:', err);
+    res.status(500).json({ error: 'Backup failed: ' + err.message });
+  }
+});
+
 module.exports = router;

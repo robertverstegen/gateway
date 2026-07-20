@@ -1,11 +1,11 @@
-# Build stage — needs full toolchain for better-sqlite3 native bindings
-FROM node:20-alpine AS builder
-RUN apk add --no-cache python3 make g++
+# Build stage — Debian-based so native modules compile against glibc
+FROM node:20-slim AS builder
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 
-# Runtime stage — slim image, far fewer CVEs, no build tools
+# Runtime stage — same glibc base, no build tools
 FROM node:20-slim AS runtime
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules

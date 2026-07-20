@@ -43,11 +43,9 @@ const adminProxy = createProxyMiddleware({
   target: GATEWAY_ADMIN_URL + '/admin',
   changeOrigin: true,
   pathRewrite: { '^/admin': '' },
-  on: {
-    proxyReq: (proxyReq) => {
-      if (ADMIN_KEY) {
-        proxyReq.setHeader('x-admin-key', ADMIN_KEY);
-      }
+  onProxyReq: (proxyReq) => {
+    if (ADMIN_KEY) {
+      proxyReq.setHeader('x-admin-key', ADMIN_KEY);
     }
   },
   onError: (err, req, res) => {

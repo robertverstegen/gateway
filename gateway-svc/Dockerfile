@@ -25,7 +25,7 @@ ENV NODE_ENV=production \
     ADMIN_BIND=0.0.0.0 \
     DB_PATH=/data/gateway.db
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- --tries=1 http://127.0.0.1:3000/health || exit 1
 
 CMD ["node", "src/index.js"]

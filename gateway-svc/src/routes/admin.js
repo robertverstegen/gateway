@@ -2,10 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const crypto = require('crypto');
 const { getDb } = require('../db/database');
 const { hashKey } = require('../middleware/auth');
 const { getAvailableTypes } = require('../adapters');
+
+const UNIQUE_VIOLATION = '23505';
+const FOREIGN_KEY_VIOLATION = '23503';
 
 // Simple admin key auth
 function adminAuth(req, res, next) {
@@ -21,170 +23,192 @@ function adminAuth(req, res, next) {
 
 router.use(adminAuth);
 
+// Wrap async handlers so rejected promises reach Express's error handler
+// instead of crashing the process.
+const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+
+// Builds "col1 = $2, col2 = $3" style SET clauses for dynamic PATCH endpoints.
+// Placeholders start at $2 because $1 is reserved for the WHERE id below.
+function buildSet(fields) {
+  const clauses = [];
+  const vals = [];
+  let i = 2;
+  for (const [col, val] of fields) {
+    if (val !== undefined) {
+      clauses.push(`${col} = $${i}`);
+      vals.push(val);
+      i++;
+    }
+  }
+  return { clauses, vals };
+}
+
 // ─── BACKENDS ────────────────────────────────────────────────────────────────
 
-router.get('/backends', (req, res) => {
-  const db = getDb();
-  const backends = db.prepare('SELECT id, name, type, enabled, created_at FROM backends').all();
-  res.json(backends);
-});
+router.get('/backends', ah(async (req, res) => {
+  const db = await getDb();
+  const { rows } = await db.query('SELECT id, name, type, enabled, created_at FROM backends');
+  res.json(rows);
+}));
 
-router.get('/backends/:id', (req, res) => {
-  const db = getDb();
-  const backend = db.prepare('SELECT id, name, type, config, enabled, created_at FROM backends WHERE id = ?').get(req.params.id);
+router.get('/backends/:id', ah(async (req, res) => {
+  const db = await getDb();
+  const { rows } = await db.query('SELECT id, name, type, config, enabled, created_at FROM backends WHERE id = $1', [req.params.id]);
+  const backend = rows[0];
   if (!backend) return res.status(404).json({ error: 'Backend not found' });
   backend.config = JSON.parse(backend.config);
   res.json(backend);
-});
+}));
 
-router.post('/backends', (req, res) => {
+router.post('/backends', ah(async (req, res) => {
   const { name, type, config } = req.body;
   if (!name || !type || !config) return res.status(400).json({ error: 'name, type, config required' });
   if (!getAvailableTypes().includes(type)) {
     return res.status(400).json({ error: `Unknown type. Available: ${getAvailableTypes().join(', ')}` });
   }
 
-  const db = getDb();
+  const db = await getDb();
   const id = uuidv4();
   try {
-    db.prepare('INSERT INTO backends (id, name, type, config) VALUES (?, ?, ?, ?)')
-      .run(id, name, type, JSON.stringify(config));
+    await db.query('INSERT INTO backends (id, name, type, config) VALUES ($1, $2, $3, $4)',
+      [id, name, type, JSON.stringify(config)]);
     res.status(201).json({ id, name, type, enabled: true });
   } catch (e) {
-    res.status(409).json({ error: e.message });
+    if (e.code === UNIQUE_VIOLATION) return res.status(409).json({ error: `Backend "${name}" already exists.` });
+    throw e;
   }
-});
+}));
 
-router.patch('/backends/:id', (req, res) => {
-  const db = getDb();
+router.patch('/backends/:id', ah(async (req, res) => {
+  const db = await getDb();
   const { enabled, config, name } = req.body;
-  const updates = [];
-  const vals = [];
 
-  if (enabled !== undefined) { updates.push('enabled = ?'); vals.push(enabled ? 1 : 0); }
-  if (name !== undefined)    { updates.push('name = ?');    vals.push(name); }
-  if (config !== undefined)  { updates.push('config = ?');  vals.push(JSON.stringify(config)); }
+  const { clauses, vals } = buildSet([
+    ['enabled', enabled !== undefined ? (enabled ? 1 : 0) : undefined],
+    ['name', name],
+    ['config', config !== undefined ? JSON.stringify(config) : undefined]
+  ]);
 
-  if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+  if (!clauses.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  vals.push(req.params.id);
-  const result = db.prepare(`UPDATE backends SET ${updates.join(', ')} WHERE id = ?`).run(...vals);
-  if (!result.changes) return res.status(404).json({ error: 'Backend not found' });
+  const result = await db.query(`UPDATE backends SET ${clauses.join(', ')} WHERE id = $1`, [req.params.id, ...vals]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Backend not found' });
   res.json({ ok: true });
-});
+}));
 
-router.delete('/backends/:id', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('DELETE FROM backends WHERE id = ?').run(req.params.id);
-  if (!result.changes) return res.status(404).json({ error: 'Backend not found' });
+router.delete('/backends/:id', ah(async (req, res) => {
+  const db = await getDb();
+  const result = await db.query('DELETE FROM backends WHERE id = $1', [req.params.id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Backend not found' });
   res.json({ ok: true });
-});
+}));
 
 // Kill switch shortcuts
-router.post('/backends/:id/disable', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('UPDATE backends SET enabled = 0 WHERE id = ?').run(req.params.id);
-  if (!result.changes) return res.status(404).json({ error: 'Backend not found' });
+router.post('/backends/:id/disable', ah(async (req, res) => {
+  const db = await getDb();
+  const result = await db.query('UPDATE backends SET enabled = 0 WHERE id = $1', [req.params.id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Backend not found' });
   res.json({ ok: true, message: 'Backend kill switch activated' });
-});
+}));
 
-router.post('/backends/:id/enable', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('UPDATE backends SET enabled = 1 WHERE id = ?').run(req.params.id);
-  if (!result.changes) return res.status(404).json({ error: 'Backend not found' });
+router.post('/backends/:id/enable', ah(async (req, res) => {
+  const db = await getDb();
+  const result = await db.query('UPDATE backends SET enabled = 1 WHERE id = $1', [req.params.id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Backend not found' });
   res.json({ ok: true, message: 'Backend enabled' });
-});
+}));
 
 // ─── PRODUCTS ─────────────────────────────────────────────────────────────────
 
-router.get('/products', (req, res) => {
-  const db = getDb();
-  const products = db.prepare(`
+router.get('/products', ah(async (req, res) => {
+  const db = await getDb();
+  const { rows } = await db.query(`
     SELECT p.*, b.name as backend_name, b.type as backend_type, b.enabled as backend_enabled
     FROM products p JOIN backends b ON p.backend_id = b.id
-  `).all();
-  res.json(products);
-});
+  `);
+  res.json(rows);
+}));
 
-router.post('/products', (req, res) => {
+router.post('/products', ah(async (req, res) => {
   const { name, backend_id, description } = req.body;
   if (!name || !backend_id) return res.status(400).json({ error: 'name, backend_id required' });
 
-  const db = getDb();
-  const backend = db.prepare('SELECT id FROM backends WHERE id = ?').get(backend_id);
+  const db = await getDb();
+  const backend = (await db.query('SELECT id FROM backends WHERE id = $1', [backend_id])).rows[0];
   if (!backend) return res.status(404).json({ error: 'Backend not found' });
 
   const id = uuidv4();
   try {
-    db.prepare('INSERT INTO products (id, name, backend_id, description) VALUES (?, ?, ?, ?)')
-      .run(id, name, backend_id, description || null);
+    await db.query('INSERT INTO products (id, name, backend_id, description) VALUES ($1, $2, $3, $4)',
+      [id, name, backend_id, description || null]);
     res.status(201).json({ id, name, backend_id, enabled: true });
   } catch (e) {
-    res.status(409).json({ error: e.message });
+    if (e.code === UNIQUE_VIOLATION) return res.status(409).json({ error: `Product "${name}" already exists.` });
+    throw e;
   }
-});
+}));
 
-router.patch('/products/:id', (req, res) => {
-  const db = getDb();
+router.patch('/products/:id', ah(async (req, res) => {
+  const db = await getDb();
   const { enabled, name, description, backend_id } = req.body;
-  const updates = [];
-  const vals = [];
 
-  if (enabled !== undefined)     { updates.push('enabled = ?');     vals.push(enabled ? 1 : 0); }
-  if (name !== undefined)        { updates.push('name = ?');        vals.push(name); }
-  if (description !== undefined) { updates.push('description = ?'); vals.push(description); }
-  if (backend_id !== undefined)  { updates.push('backend_id = ?');  vals.push(backend_id); }
+  const { clauses, vals } = buildSet([
+    ['enabled', enabled !== undefined ? (enabled ? 1 : 0) : undefined],
+    ['name', name],
+    ['description', description],
+    ['backend_id', backend_id]
+  ]);
 
-  if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
-  vals.push(req.params.id);
+  if (!clauses.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  const result = db.prepare(`UPDATE products SET ${updates.join(', ')} WHERE id = ?`).run(...vals);
-  if (!result.changes) return res.status(404).json({ error: 'Product not found' });
+  const result = await db.query(`UPDATE products SET ${clauses.join(', ')} WHERE id = $1`, [req.params.id, ...vals]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Product not found' });
   res.json({ ok: true });
-});
+}));
 
-router.delete('/products/:id', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
-  if (!result.changes) return res.status(404).json({ error: 'Product not found' });
+router.delete('/products/:id', ah(async (req, res) => {
+  const db = await getDb();
+  const result = await db.query('DELETE FROM products WHERE id = $1', [req.params.id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Product not found' });
   res.json({ ok: true });
-});
+}));
 
 // ─── SUBSCRIPTIONS ────────────────────────────────────────────────────────────
 
-router.get('/subscriptions', (req, res) => {
-  const db = getDb();
-  const subs = db.prepare(`
+router.get('/subscriptions', ah(async (req, res) => {
+  const db = await getDb();
+  const { rows } = await db.query(`
     SELECT s.id, COALESCE(s.customer_ref, s.id) as customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
            p.name as product_name, b.name as backend_name
     FROM subscriptions s
     JOIN products p ON s.product_id = p.id
     JOIN backends b ON p.backend_id = b.id
     ORDER BY s.created_at DESC
-  `).all();
-  res.json(subs);
-});
+  `);
+  res.json(rows);
+}));
 
-router.get('/subscriptions/:id', (req, res) => {
-  const db = getDb();
-  const sub = db.prepare(`
+router.get('/subscriptions/:id', ah(async (req, res) => {
+  const db = await getDb();
+  const { rows } = await db.query(`
     SELECT s.id, COALESCE(s.customer_ref, s.id) as customer_ref, s.name, s.key_prefix, s.product_id, s.enabled, s.rate_limit, s.created_at,
            p.name as product_name, b.name as backend_name
     FROM subscriptions s
     JOIN products p ON s.product_id = p.id
     JOIN backends b ON p.backend_id = b.id
-    WHERE s.id = ?
-  `).get(req.params.id);
+    WHERE s.id = $1
+  `, [req.params.id]);
+  const sub = rows[0];
   if (!sub) return res.status(404).json({ error: 'Subscription not found' });
   res.json(sub);
-});
+}));
 
-router.post('/subscriptions', (req, res) => {
+router.post('/subscriptions', ah(async (req, res) => {
   const { name, customer_ref, product_id, rate_limit } = req.body;
   if (!name || !customer_ref || !product_id) return res.status(400).json({ error: 'name, customer_ref, product_id required' });
 
-  const db = getDb();
-  const product = db.prepare('SELECT id FROM products WHERE id = ?').get(product_id);
+  const db = await getDb();
+  const product = (await db.query('SELECT id FROM products WHERE id = $1', [product_id])).rows[0];
   if (!product) return res.status(404).json({ error: 'Product not found' });
 
   // Generate a secure random key
@@ -194,50 +218,54 @@ router.post('/subscriptions', (req, res) => {
   const id = uuidv4();
 
   try {
-    db.prepare(`
+    await db.query(`
       INSERT INTO subscriptions (id, customer_ref, name, key_hash, key_prefix, product_id, rate_limit)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, customer_ref, name, keyHash, keyPrefix, product_id, rate_limit || 0);
-  } catch(e) {
-    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: `Customer ref "${customer_ref}" already has a subscription for this product.` });
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [id, customer_ref, name, keyHash, keyPrefix, product_id, rate_limit || 0]);
+  } catch (e) {
+    if (e.code === UNIQUE_VIOLATION) return res.status(409).json({ error: `Customer ref "${customer_ref}" already has a subscription for this product.` });
     throw e;
   }
 
   // Return the raw key ONCE - it cannot be retrieved again
   res.status(201).json({ id, customer_ref, name, key: rawKey, key_prefix: keyPrefix, product_id });
-});
+}));
 
-router.patch('/subscriptions/:id', (req, res) => {
-  const db = getDb();
+router.patch('/subscriptions/:id', ah(async (req, res) => {
+  const db = await getDb();
   const { enabled, name, customer_ref, rate_limit, product_id } = req.body;
-  const updates = [];
-  const vals = [];
 
-  if (enabled !== undefined)       { updates.push('enabled = ?');      vals.push(enabled ? 1 : 0); }
-  if (name !== undefined)          { updates.push('name = ?');         vals.push(name); }
-  if (customer_ref !== undefined)  { updates.push('customer_ref = ?'); vals.push(customer_ref); }
-  if (rate_limit !== undefined)    { updates.push('rate_limit = ?');   vals.push(rate_limit); }
-  if (product_id !== undefined)    { updates.push('product_id = ?');   vals.push(product_id); }
+  const { clauses, vals } = buildSet([
+    ['enabled', enabled !== undefined ? (enabled ? 1 : 0) : undefined],
+    ['name', name],
+    ['customer_ref', customer_ref],
+    ['rate_limit', rate_limit],
+    ['product_id', product_id]
+  ]);
 
-  if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
-  vals.push(req.params.id);
+  if (!clauses.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  const result = db.prepare(`UPDATE subscriptions SET ${updates.join(', ')} WHERE id = ?`).run(...vals);
-  if (!result.changes) return res.status(404).json({ error: 'Subscription not found' });
+  try {
+    const result = await db.query(`UPDATE subscriptions SET ${clauses.join(', ')} WHERE id = $1`, [req.params.id, ...vals]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Subscription not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === UNIQUE_VIOLATION) return res.status(409).json({ error: 'That customer_ref already has a subscription for this product.' });
+    throw e;
+  }
+}));
+
+router.delete('/subscriptions/:id', ah(async (req, res) => {
+  const db = await getDb();
+  const result = await db.query('DELETE FROM subscriptions WHERE id = $1', [req.params.id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Subscription not found' });
   res.json({ ok: true });
-});
-
-router.delete('/subscriptions/:id', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('DELETE FROM subscriptions WHERE id = ?').run(req.params.id);
-  if (!result.changes) return res.status(404).json({ error: 'Subscription not found' });
-  res.json({ ok: true });
-});
+}));
 
 // ─── USAGE / STATS ────────────────────────────────────────────────────────────
 
-router.get('/usage', (req, res) => {
-  const db = getDb();
+router.get('/usage', ah(async (req, res) => {
+  const db = await getDb();
   const { from, to, backend_id, subscription_id, limit = 200, status } = req.query;
 
   let query = `
@@ -248,23 +276,25 @@ router.get('/usage', (req, res) => {
     WHERE 1=1
   `;
   const params = [];
+  let i = 1;
 
-  if (from)            { query += ' AND u.ts >= ?'; params.push(from); }
-  if (to)              { query += ' AND u.ts <= ?'; params.push(to); }
-  if (backend_id)      { query += ' AND u.backend_id = ?'; params.push(backend_id); }
-  if (subscription_id) { query += ' AND u.subscription_id = ?'; params.push(subscription_id); }
-  if (status)          { query += ' AND u.status = ?'; params.push(status); }
+  if (from)            { params.push(from); query += ` AND u.ts >= $${i++}`; }
+  if (to)              { params.push(to); query += ` AND u.ts <= $${i++}`; }
+  if (backend_id)      { params.push(backend_id); query += ` AND u.backend_id = $${i++}`; }
+  if (subscription_id) { params.push(subscription_id); query += ` AND u.subscription_id = $${i++}`; }
+  if (status)          { params.push(status); query += ` AND u.status = $${i++}`; }
 
-  query += ' ORDER BY u.ts DESC LIMIT ?';
   params.push(parseInt(limit));
+  query += ` ORDER BY u.ts DESC LIMIT $${i++}`;
 
-  res.json(db.prepare(query).all(...params));
-});
+  const { rows } = await db.query(query, params);
+  res.json(rows);
+}));
 
-router.get('/stats', (req, res) => {
-  const db = getDb();
+router.get('/stats', ah(async (req, res) => {
+  const db = await getDb();
 
-  const totals = db.prepare(`
+  const totals = (await db.query(`
     SELECT
       COUNT(*) as total_requests,
       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
@@ -272,9 +302,9 @@ router.get('/stats', (req, res) => {
       SUM(total_tokens) as total_tokens,
       AVG(latency_ms) as avg_latency_ms
     FROM usage_log
-  `).get();
+  `)).rows[0];
 
-  const byBackend = db.prepare(`
+  const byBackend = (await db.query(`
     SELECT b.name, u.backend_id,
       COUNT(*) as requests,
       SUM(u.total_tokens) as tokens,
@@ -282,36 +312,36 @@ router.get('/stats', (req, res) => {
       AVG(u.latency_ms) as avg_latency_ms
     FROM usage_log u
     LEFT JOIN backends b ON u.backend_id = b.id
-    GROUP BY u.backend_id
-  `).all();
+    GROUP BY u.backend_id, b.name
+  `)).rows;
 
-  const recentErrors = db.prepare(`
+  const recentErrors = (await db.query(`
     SELECT u.ts, u.error_msg, u.backend_id, b.name as backend_name, s.name as subscription_name
     FROM usage_log u
     LEFT JOIN backends b ON u.backend_id = b.id
     LEFT JOIN subscriptions s ON u.subscription_id = s.id
     WHERE u.status = 'error'
     ORDER BY u.ts DESC LIMIT 20
-  `).all();
+  `)).rows;
 
   const { subscription_id: statsSubId } = req.query;
   const hourlyParams = [];
   let hourlyQuery = `
-    SELECT strftime('%Y-%m-%dT%H:00:00', ts) as hour,
+    SELECT to_char(date_trunc('hour', u.ts), 'YYYY-MM-DD"T"HH24:00:00') as hour,
       COALESCE(s.name, 'unknown') as subscription_name,
       u.subscription_id,
       COUNT(*) as requests,
       SUM(u.total_tokens) as tokens
     FROM usage_log u
     LEFT JOIN subscriptions s ON u.subscription_id = s.id
-    WHERE u.ts >= datetime('now', '-24 hours')
+    WHERE u.ts >= now() - interval '24 hours'
   `;
-  if (statsSubId) { hourlyQuery += ' AND u.subscription_id = ?'; hourlyParams.push(statsSubId); }
-  hourlyQuery += ' GROUP BY hour, u.subscription_id ORDER BY hour';
-  const hourly = db.prepare(hourlyQuery).all(...hourlyParams);
+  if (statsSubId) { hourlyParams.push(statsSubId); hourlyQuery += ` AND u.subscription_id = $1`; }
+  hourlyQuery += ' GROUP BY hour, u.subscription_id, s.name ORDER BY hour';
+  const hourly = (await db.query(hourlyQuery, hourlyParams)).rows;
 
   res.json({ totals, byBackend, recentErrors, hourly });
-});
+}));
 
 // ─── ADAPTER TYPES ────────────────────────────────────────────────────────────
 router.get('/adapter-types', (req, res) => {
@@ -319,41 +349,32 @@ router.get('/adapter-types', (req, res) => {
 });
 
 // ─── BACKUP ───────────────────────────────────────────────────────────────────
-router.get('/backup', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  const os = require('os');
+// Postgres has no single-file equivalent to better-sqlite3's db.backup(), so this
+// exports all tables as a JSON snapshot instead of a binary .db file. For a full
+// point-in-time binary backup, use pg_dump directly against the database, or rely
+// on Azure Database for PostgreSQL's built-in automated backups.
+router.get('/backup', ah(async (req, res) => {
+  const db = await getDb();
 
-  const db = getDb();
+  const [backends, products, subscriptions, usage_log] = await Promise.all([
+    db.query('SELECT * FROM backends'),
+    db.query('SELECT * FROM products'),
+    db.query('SELECT * FROM subscriptions'),
+    db.query('SELECT * FROM usage_log')
+  ]);
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const backupName = 'gateway-backup-' + timestamp + '.db';
-  const backupPath = path.join(os.tmpdir(), backupName);
+  const dump = {
+    exported_at: new Date().toISOString(),
+    backends: backends.rows,
+    products: products.rows,
+    subscriptions: subscriptions.rows,
+    usage_log: usage_log.rows
+  };
 
-  try {
-    db.backup(backupPath)
-      .then(() => {
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', 'attachment; filename="' + backupName + '"');
-
-        const stream = fs.createReadStream(backupPath);
-        stream.pipe(res);
-        stream.on('end', () => {
-          fs.unlink(backupPath, () => {});
-        });
-        stream.on('error', (err) => {
-          console.error('Backup stream error:', err);
-          if (!res.headersSent) res.status(500).json({ error: 'Failed to stream backup' });
-          fs.unlink(backupPath, () => {});
-        });
-      })
-      .catch((err) => {
-        console.error('Backup error:', err);
-        res.status(500).json({ error: 'Backup failed: ' + err.message });
-      });
-  } catch (err) {
-    console.error('Backup error:', err);
-    res.status(500).json({ error: 'Backup failed: ' + err.message });
-  }
-});
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="gateway-backup-${timestamp}.json"`);
+  res.send(JSON.stringify(dump, null, 2));
+}));
 
 module.exports = router;

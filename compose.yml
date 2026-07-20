@@ -1,5 +1,22 @@
 services:
-
+  # ── Postgres (local dev only — Azure uses managed Azure Database for PostgreSQL) ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: llm-gateway-db
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: gateway
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
   # ── Gateway ─────────────────────────────────────────────────────────────────
   gateway:
     build:
@@ -8,8 +25,6 @@ services:
     container_name: llm-gateway
     ports:
       - "3000:3000"
-    volumes:
-      - ./data:/data    # bind mount — SQLite file is directly accessible on the host at ./data/gateway.db
     networks:
       - public
       - internal
@@ -17,7 +32,8 @@ services:
       PORT: 3000
       ADMIN_PORT: 3001
       ADMIN_BIND: "0.0.0.0"
-      DB_PATH: /data/gateway.db
+      DATABASE_URL: postgres://gateway:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/gateway
+      PGSSL: disable
       ADMIN_KEY: ${ADMIN_KEY:-changeme}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
@@ -25,6 +41,9 @@ services:
       AZURE_OPENAI_KEY: ${AZURE_OPENAI_KEY:-}
       AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-gpt-4}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-02-15-preview}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Admin UI ─────────────────────────────────────────────────────────────────
@@ -60,5 +79,4 @@ networks:
     driver: bridge    # admin-ui ↔ host/nginx, no internal: true
 
 volumes:
-  gateway-data:
-    driver: local
+  pgdata:

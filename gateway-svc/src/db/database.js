@@ -1,50 +1,52 @@
 // src/db/database.js
-const Database = require('better-sqlite3');
-const { v4: uuidv4 } = require('uuid');
+const { Pool } = require('pg');
 
-const DB_PATH = process.env.DB_PATH || '/data/gateway.db';
+const DATABASE_URL = process.env.DATABASE_URL;
 
-let db;
+let pool;
 
-function getDb() {
-  if (!db) {
-    const fs = require('fs');
-    const path = require('path');
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initSchema(db);
+function getPool() {
+  if (!pool) {
+    if (!DATABASE_URL) {
+      throw new Error('DATABASE_URL is not set. Example: postgres://user:pass@host:5432/gateway');
+    }
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      // Azure Database for PostgreSQL Flexible Server requires TLS. rejectUnauthorized:false
+      // keeps this working against Azure's managed cert chain without bundling a CA file;
+      // tighten this (load Azure's root CA) if you need strict verification.
+      ssl: process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false }
+    });
   }
-  return db;
+  return pool;
 }
 
-function initSchema(db) {
-  db.exec(`
+async function initSchema() {
+  const db = getPool();
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS backends (
       id         TEXT PRIMARY KEY,
       name       TEXT NOT NULL UNIQUE,
       type       TEXT NOT NULL,
       config     TEXT NOT NULL,
       enabled    INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
 
-  db.exec(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS products (
       id          TEXT PRIMARY KEY,
       name        TEXT NOT NULL UNIQUE,
       backend_id  TEXT NOT NULL REFERENCES backends(id),
       description TEXT,
       enabled     INTEGER NOT NULL DEFAULT 1,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
 
-  db.exec(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id           TEXT PRIMARY KEY,
       customer_ref TEXT NOT NULL,
@@ -54,19 +56,19 @@ function initSchema(db) {
       product_id   TEXT NOT NULL REFERENCES products(id),
       enabled      INTEGER NOT NULL DEFAULT 1,
       rate_limit   INTEGER DEFAULT 0,
-      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(customer_ref, product_id)
     )
   `);
 
-  db.exec(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS usage_log (
-      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       subscription_id   TEXT,
       customer_ref      TEXT,
       product_id        TEXT,
       backend_id        TEXT,
-      ts                TEXT NOT NULL DEFAULT (datetime('now')),
+      ts                TIMESTAMPTZ NOT NULL DEFAULT now(),
       model             TEXT,
       prompt_tokens     INTEGER DEFAULT 0,
       completion_tokens INTEGER DEFAULT 0,
@@ -77,44 +79,64 @@ function initSchema(db) {
     )
   `);
 
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_ts       ON usage_log(ts)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_sub      ON usage_log(subscription_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_customer ON usage_log(customer_ref)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_backend  ON usage_log(backend_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_usage_ts       ON usage_log(ts)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_usage_sub      ON usage_log(subscription_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_usage_customer ON usage_log(customer_ref)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_usage_backend  ON usage_log(backend_id)`);
 
-  seedDefaults(db);
+  await seedDefaults(db);
 }
 
-function seedDefaults(db) {
-  const claudeExists = db.prepare("SELECT 1 FROM backends WHERE name = 'claude'").get();
+async function seedDefaults(db) {
+  const { v4: uuidv4 } = require('uuid');
+
+  const claudeExists = (await db.query("SELECT 1 FROM backends WHERE name = 'claude'")).rowCount > 0;
   if (!claudeExists && process.env.CLAUDE_API_KEY) {
-    db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'claude', 'claude', ?)`)
-      .run(uuidv4(), JSON.stringify({
+    await db.query(
+      `INSERT INTO backends (id, name, type, config) VALUES ($1, 'claude', 'claude', $2)`,
+      [uuidv4(), JSON.stringify({
         api_key: process.env.CLAUDE_API_KEY,
         model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
         max_tokens: 4096
-      }));
+      })]
+    );
   }
 
-  const azureExists = db.prepare("SELECT 1 FROM backends WHERE name = 'azure_openai'").get();
+  const azureExists = (await db.query("SELECT 1 FROM backends WHERE name = 'azure_openai'")).rowCount > 0;
   if (!azureExists && process.env.AZURE_OPENAI_ENDPOINT) {
-    db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'azure_openai', 'azure_openai', ?)`)
-      .run(uuidv4(), JSON.stringify({
+    await db.query(
+      `INSERT INTO backends (id, name, type, config) VALUES ($1, 'azure_openai', 'azure_openai', $2)`,
+      [uuidv4(), JSON.stringify({
         endpoint: process.env.AZURE_OPENAI_ENDPOINT,
         api_key: process.env.AZURE_OPENAI_KEY,
         deployment: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4',
         api_version: process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview'
-      }));
+      })]
+    );
   }
 
-  const mistralExists = db.prepare("SELECT 1 FROM backends WHERE name = 'mistral'").get();
+  const mistralExists = (await db.query("SELECT 1 FROM backends WHERE name = 'mistral'")).rowCount > 0;
   if (!mistralExists && process.env.MISTRAL_API_KEY) {
-    db.prepare(`INSERT INTO backends (id, name, type, config) VALUES (?, 'mistral', 'mistral', ?)`)
-      .run(uuidv4(), JSON.stringify({
+    await db.query(
+      `INSERT INTO backends (id, name, type, config) VALUES ($1, 'mistral', 'mistral', $2)`,
+      [uuidv4(), JSON.stringify({
         api_key: process.env.MISTRAL_API_KEY,
         model: process.env.MISTRAL_MODEL || 'mistral-large-latest'
-      }));
+      })]
+    );
   }
+}
+
+let initialized = null;
+
+// Returns the pool, guaranteeing schema init has run exactly once first.
+async function getDb() {
+  const db = getPool();
+  if (!initialized) {
+    initialized = initSchema();
+  }
+  await initialized;
+  return db;
 }
 
 module.exports = { getDb };

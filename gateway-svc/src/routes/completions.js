@@ -7,7 +7,7 @@ const { getDb } = require('../db/database');
 
 router.post('/chat/completions', authMiddleware, async (req, res) => {
   const { subscription, backend } = req;
-  const db = getDb();
+  const db = await getDb();
 
   // Validate request body
   const body = req.body;
@@ -61,12 +61,19 @@ router.post('/chat/completions', authMiddleware, async (req, res) => {
       }
     });
   } finally {
-    db.prepare(`
-      INSERT INTO usage_log (subscription_id, customer_ref, product_id, backend_id, model, status, error_msg,
-        prompt_tokens, completion_tokens, total_tokens, latency_ms)
-      VALUES (@subscription_id, @customer_ref, @product_id, @backend_id, @model, @status, @error_msg,
-        @prompt_tokens, @completion_tokens, @total_tokens, @latency_ms)
-    `).run(logEntry);
+    try {
+      await db.query(`
+        INSERT INTO usage_log (subscription_id, customer_ref, product_id, backend_id, model, status, error_msg,
+          prompt_tokens, completion_tokens, total_tokens, latency_ms)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `, [
+        logEntry.subscription_id, logEntry.customer_ref, logEntry.product_id, logEntry.backend_id,
+        logEntry.model, logEntry.status, logEntry.error_msg,
+        logEntry.prompt_tokens, logEntry.completion_tokens, logEntry.total_tokens, logEntry.latency_ms
+      ]);
+    } catch (logErr) {
+      console.error('Failed to write usage log:', logErr);
+    }
   }
 });
 
